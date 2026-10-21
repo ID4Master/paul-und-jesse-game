@@ -30,11 +30,21 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 
 ## Aktueller Stand
 
-- Zwei Bauern mit geteiltem Bildschirm
-  - Spieler 1 (links): W A S D laufen, Leertaste angreifen
-  - Spieler 2 (rechts): Pfeiltasten laufen, Enter angreifen
-- Eigene Burg (blau) und feindliche Burg (rot), dazwischen Wald, Felsen und ein Bergpass
-- Rote Wachen heben sichtbar das Schwert, bevor sie zuschlagen
-- Lebensleisten über allen Köpfen, Schadenszahlen und roter Rand bei Treffern
-- Teamwork: Treffen beide Bauern denselben Gegner kurz hintereinander, gibt es doppelten Schaden
-- Gemeinsamer Team-Rang: alle 3 besiegten Gegner steigt ihr auf
+- Zwei Bauern mit geteiltem Bildschirm, jeder levelt für sich
+  - Spieler 1 (links): W A S D laufen, Leertaste angreifen, Q Waffe wechseln
+  - Spieler 2 (rechts): Pfeiltasten laufen, Enter angreifen, Shift rechts Waffe wechseln
+- Ränge: Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär (alle 3 besiegten Gegner)
+- Mit jedem Rang bessere Rüstung (Helm, Brustpanzer, Schulterplatten, Umhang, Krone, Gold), sie hält auch mehr Schaden ab
+- Waffen: Mistgabel und Bogen (grob zielen reicht, der Pfeil fliegt zum Ziel)
+- Sonderwaffen zum Einsammeln für 15 Sekunden: Feuerschwert und Maschinengewehr
+- Jeder hat 3 Leben. Wer alle verloren hat, wartet auf den anderen. Sind beide raus, beginnt alles neu als Bauer
+- Gegner fallen lassen Herzen (+30), goldene Herzen (+1 Leben) oder Sonderwaffen
+- Wachen kreisen um euch, greifen höchstens zu zweit an, weichen aus und ziehen sich verletzt zurück
+- Bogenschützen halten Abstand und schießen rote Pfeile
+- Rehe und Wildschweine im Wald: erlegen gibt eine Keule (+40 Energie)
+- Große feindliche Burg mit Torhaus, Bergfried, Häusern im Hof und einem Dorf davor
+
+## Technik
+
+- Start: `python -m http.server 8123` im Projektordner, dann http://localhost:8123 öffnen
+- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne)
