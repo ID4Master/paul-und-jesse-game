@@ -28,9 +28,13 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 - Mit dem Geld kaufst du dir Sachen; was du einmal gekauft hast, bekommst du danach umsonst
 - Du kannst dir dann selbst Sachen bauen, zum Beispiel eine Burg
 
-## Stand der ersten Version
+## Aktueller Stand
 
-- Bauer läuft mit den Pfeiltasten durch Wald und über einen Bergpass
-- Eigene Burg (blau) und feindliche Burg (rot)
-- Rote Wachen greifen an, mit der Leertaste wehrst du dich mit der Mistgabel
-- Alle 3 besiegten Gegner steigst du einen Rang auf
+- Zwei Bauern mit geteiltem Bildschirm
+  - Spieler 1 (links): W A S D laufen, Leertaste angreifen
+  - Spieler 2 (rechts): Pfeiltasten laufen, Enter angreifen
+- Eigene Burg (blau) und feindliche Burg (rot), dazwischen Wald, Felsen und ein Bergpass
+- Rote Wachen heben sichtbar das Schwert, bevor sie zuschlagen
+- Lebensleisten über allen Köpfen, Schadenszahlen und roter Rand bei Treffern
+- Teamwork: Treffen beide Bauern denselben Gegner kurz hintereinander, gibt es doppelten Schaden
+- Gemeinsamer Team-Rang: alle 3 besiegten Gegner steigt ihr auf
