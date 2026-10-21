@@ -41,8 +41,8 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
   - Rote Schelme kämpfen mit Kissen und Schneebällen und werden in Frösche verzaubert statt besiegt
   - Tierfreunde laufen mit und schubsen freche Schelme weg
   - Rucksack (10 Plätze): Holz 🪵 und Steine 🪨 liegen in der Welt, Seife 🧼 und Sternenstaub ✨ lassen verzauberte Schelme fallen
-  - In der eigenen Burg wird der Rucksack automatisch ins Burglager ausgeladen
-  - Bauplätze an der Burg (einfach draufstellen, wenn genug im Lager ist):
+  - Ausladen: auf die leuchtende Fläche 🎒 vor der Burg laufen, alles fliegt in die Truhe (Burglager)
+  - Werkstatt links vor der Burg: pro Bauwerk eine Fläche, einfach draufstellen, wenn genug im Lager ist (gelb = genug da, grün = gebaut):
     - 🫧 Seifenblasen-Katapult (🪵6 🧼3 ✨2): schießt alle 10 Sekunden eine Riesen-Seifenblase auf die Schelme
     - ⛲ Heilbrunnen (🪨5 🧼1): schnell Energie auftanken
     - 🌳 Apfelgarten (🪵3 🪨2): wachsen Äpfel zum Tierefüttern

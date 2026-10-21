@@ -46,6 +46,11 @@
   #store[hidden] { display: none; }
   body.split #store { top: auto; bottom: 12px; }
 
+  /* Lager-Anzeige im Einzelspieler und Netzwerkspiel direkt unter der eigenen Anzeige, damit nichts übereinander liegt */
+  .hud { max-width: calc(100vw - 130px); }
+  .hud #store { position: static; transform: none; display: block; background: none; padding: 0; margin-top: 3px;
+                white-space: normal; font-size: 13px; border-radius: 0; }
+
   /* ---------- Sprachchat ---------- */
   #voice { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
            background: #000b; color: #fff; padding: 8px 12px; border-radius: 14px; border: 3px solid transparent; font-size: 15px;
@@ -101,6 +106,9 @@
   #tSwap { right: 136px; bottom: 24px; width: 64px; height: 64px; font-size: 28px; }
 
   @media (max-width: 700px) {
+    .hud { top: 8px; left: 8px !important; max-width: calc(100vw - 110px); }
+    .hud #store { font-size: 11px; }
+    #menuBtn { top: 8px; right: 8px; padding: 5px 9px; font-size: 13px; }
     .hud .name { font-size: 16px; }
     .bar { width: 160px; height: 16px; }
     .hpnum { font-size: 12px; line-height: 16px; }

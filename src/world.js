@@ -248,6 +248,7 @@ export const freeSpot = (x, z) =>
     (Math.abs(x) < 18 && Math.abs(z - HOME.z) < 18) ||              // eure Burg
     (Math.abs(x) < 10 && z > 55 && z < 70) ||                       // Platz vor eurer Burg
     (x > 10 && x < 38 && z > 56 && z < 92) ||                       // Stall
+    (x > -28 && x < -6 && z > 44 && z < 72) ||                      // Werkstatt
     (Math.abs(x) < 42 && z < -38 && z > -125));                     // Dorf und feindliche Burg
 
 export function randomFreeSpot() {

@@ -1211,8 +1211,9 @@ function spawnKidWorld() {
   for (let i = 0; i < 16; i++) spawnAnimal();
 }
 
-// ================= Kinderfreundlich: Rucksack, Burglager und Bauen =================
-// Holz, Steine, Seife und Sternenstaub sammeln, in der eigenen Burg ausladen und auf den Bauplätzen etwas bauen.
+// ================= Kinderfreundlich: Rucksack, Ablade-Fläche und Werkstatt =================
+// Holz, Steine, Seife und Sternenstaub sammeln. Auf der Ablade-Fläche vor der Burg fliegt alles in die Truhe.
+// In der Werkstatt neben der Burg hat jedes Bauwerk eine eigene Fläche: draufstellen und es wird gebaut.
 const MATERIALS = ['wood', 'stone', 'soap', 'star'];
 const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨' };
 const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub' };
@@ -1221,56 +1222,119 @@ const store = { wood: 0, stone: 0, soap: 0, star: 0 };
 const packCount = (p) => MATERIALS.reduce((n, m) => n + p.pack[m], 0);
 const matText = (o) => MATERIALS.filter((m) => o[m] > 0).map((m) => `${MAT_ICON[m]}${o[m]}`).join(' ');
 const inCastle = (pos) => Math.abs(pos.x - HOME.x) < 9.5 && pos.z > HOME.z - 9.5 && pos.z < HOME.z + 9.5;
+const onPad = (pos, x, z) => Math.abs(pos.x - x) < 2.1 && Math.abs(pos.z - z) < 2.1;
 
+const UNLOAD = { x: 8, z: 62 };
 const BUILDS = [
-  { id: 'catapult', name: 'Seifenblasen-Katapult', icon: '🫧', x: -8, z: 60, cost: { wood: 6, soap: 3, star: 2 },
-    done: 'Das Katapult schießt jetzt Riesen-Seifenblasen auf die freche Burg!' },
-  { id: 'fountain', name: 'Heilbrunnen', icon: '⛲', x: -6, z: 74, cost: { stone: 5, soap: 1 },
-    done: 'Am Heilbrunnen bekommt ihr schnell wieder Energie.' },
-  { id: 'garden', name: 'Apfelgarten', icon: '🌳', x: -6, z: 86, cost: { wood: 3, stone: 2 },
-    done: 'Im Apfelgarten wachsen jetzt Äpfel für eure Tiere.' },
-  { id: 'tower', name: 'Festturm', icon: '🏰', x: 6, z: 86, cost: { stone: 6, wood: 2, star: 3 },
+  { id: 'catapult', name: 'Katapult', icon: '🫧', px: -19, pz: 57, x: -7, z: 56, cost: { wood: 6, soap: 3, star: 2 },
+    done: 'Das Seifenblasen-Katapult schießt jetzt Riesen-Seifenblasen auf die freche Burg!' },
+  { id: 'fountain', name: 'Heilbrunnen', icon: '⛲', px: -13, pz: 57, x: -6, z: 74, cost: { stone: 5, soap: 1 },
+    done: 'Am Heilbrunnen in der Burg bekommt ihr schnell wieder Energie.' },
+  { id: 'garden', name: 'Apfelgarten', icon: '🌳', px: -19, pz: 63, x: -6, z: 86, cost: { wood: 3, stone: 2 },
+    done: 'Im Apfelgarten in der Burg wachsen jetzt Äpfel für eure Tiere.' },
+  { id: 'tower', name: 'Festturm', icon: '🏰', px: -13, pz: 63, x: 6, z: 86, cost: { stone: 6, wood: 2, star: 3 },
     done: 'Eure Burg ist jetzt die schönste im Land! Jeder bekommt ein Extra-Leben.' },
 ];
 const built = {};
 
-function labelSprite(text) {
+// Leuchtende Fläche auf dem Boden mit Bild und Schrift
+function makePad(color) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 256;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  pad.rotation.x = -Math.PI / 2;   // lesbar, wenn man von der Burg aus kommt
+  pad.position.y = 0.06;
+  pad.userData = { cv, tex, color, key: '' };
+  return pad;
+}
+function drawPad(pad, { icon, title, line, state }) {
+  const key = [icon, title, line, state].join('|');
+  if (pad.userData.key === key) return;
+  pad.userData.key = key;
+  const { cv, tex } = pad.userData;
+  const ctx = cv.getContext('2d');
+  const color = state === 'built' ? '#3ecf4a' : state === 'ready' ? '#ffd54f' : pad.userData.color;
+  ctx.clearRect(0, 0, 256, 256);
+  ctx.fillStyle = color + '55';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 14;
+  ctx.beginPath();
+  ctx.roundRect(10, 10, 236, 236, 30);
+  ctx.fill();
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = '96px system-ui, sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(icon, 128, 118);
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 6;
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.strokeText(title, 128, 172);
+  ctx.fillText(title, 128, 172);
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  ctx.strokeText(line, 128, 216);
+  ctx.fillText(line, 128, 216);
+  tex.needsUpdate = true;
+}
+
+const flatLabel = (text) => {
   const cv = document.createElement('canvas');
   cv.width = 512; cv.height = 128;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#000a';
+  ctx.fillStyle = '#5d4037';
   ctx.beginPath();
-  ctx.roundRect(4, 4, 504, 120, 24);
+  ctx.roundRect(4, 4, 504, 120, 20);
   ctx.fill();
-  ctx.font = 'bold 42px system-ui, sans-serif';
+  ctx.font = 'bold 64px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  const [a, b] = text.split('\n');
-  ctx.fillText(a, 256, 54);
-  ctx.font = '38px system-ui, sans-serif';
-  ctx.fillText(b || '', 256, 104);
+  ctx.fillStyle = '#ffe082';
+  ctx.fillText(text, 256, 86);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-  sp.scale.set(4, 1, 1);
-  sp.renderOrder = 9;
-  return sp;
+  return new THREE.Mesh(new THREE.PlaneGeometry(4, 1), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+};
+
+// Werkstatt: Holzboden, Werkbank, Schild
+const workshop = new THREE.Group();
+{
+  const wood = std(0x8a6a44);
+  const floor = mesh(new THREE.BoxGeometry(14, 0.08, 14), std(0xa1824f), -16, 0.02, 60);
+  workshop.add(floor);
+  workshop.add(mesh(new THREE.BoxGeometry(1, 0.9, 3), wood, -22.3, 0.45, 60));
+  workshop.add(mesh(new THREE.BoxGeometry(0.5, 0.3, 0.7), std(0x777777), -22.3, 1.05, 59));
+  for (const x of [-22.5, -9.5]) workshop.add(mesh(new THREE.BoxGeometry(0.2, 3.4, 0.2), wood, x, 1.7, 52.8));
+  const sign = flatLabel('🔨 Werkstatt');
+  sign.position.set(-16, 3.6, 52.8);
+  workshop.add(sign, mesh(new THREE.BoxGeometry(13.4, 0.15, 0.2), wood, -16, 3.0, 52.8));
+  scene.add(workshop);
 }
 
-// Bauplätze: Schild mit Bauplan, solange noch nichts gebaut ist
+// Ablade-Fläche mit Truhe
+const unloadPad = makePad('#40c4ff');
+unloadPad.position.set(UNLOAD.x, 0.06, UNLOAD.z);
+drawPad(unloadPad, { icon: '🎒', title: 'Ausladen', line: '➜ Burglager', state: 'normal' });
+const chest = new THREE.Group();
+chest.add(mesh(new THREE.BoxGeometry(1.4, 0.8, 0.9), std(0x8d5a2b), 0, 0.4, 0));
+chest.add(mesh(new THREE.BoxGeometry(1.45, 0.25, 0.95), std(0x6d4320), 0, 0.92, 0));
+chest.add(mesh(new THREE.BoxGeometry(0.2, 0.25, 0.05), metal(0xd4af37), 0, 0.75, 0.47));
+chest.position.set(UNLOAD.x, 0, UNLOAD.z + 2.8);
+chest.rotation.y = Math.PI;
+scene.add(unloadPad, chest);
+
 const sites = BUILDS.map((b) => {
-  const g = new THREE.Group();
-  g.position.set(b.x, 0, b.z);
-  const ring = mesh(new THREE.TorusGeometry(1.6, 0.06, 6, 28).rotateX(Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffd54f, emissiveIntensity: 0.6 }), 0, 0.05, 0);
-  const post = mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), std(0x7a5a3a), 0, 0.7, 0);
-  const label = labelSprite(`${b.icon} ${b.name}\n${matText(b.cost)}`);
-  label.position.y = 2.6;
-  g.add(ring, post, label);
-  scene.add(g);
-  return { b, g, model: null, hintCd: 0 };
+  const pad = makePad('#ffffff');
+  pad.position.set(b.px, 0.1, b.pz);
+  scene.add(pad);
+  return { b, pad, model: null, hintCd: 0 };
 });
-const updateSitesVisible = () => sites.forEach((s) => (s.g.visible = kid && started && !built[s.b.id]));
+const updateSitesVisible = () => {
+  const show = kid && started;
+  workshop.visible = unloadPad.visible = chest.visible = show;
+  sites.forEach((s) => (s.pad.visible = show));
+};
 
 function makeBuildModel(id) {
   const g = new THREE.Group();
@@ -1320,7 +1384,7 @@ function placeBuild(id) {
   s.model = makeBuildModel(id);
   s.model.position.set(s.b.x, 0, s.b.z);
   scene.add(s.model);
-  updateSitesVisible();
+  for (let k = 0; k < 8; k++) floatText(scene, '✨', '#ffd54f', { x: s.b.x + (Math.random() - 0.5) * 3, z: s.b.z + (Math.random() - 0.5) * 3 }, 1 + Math.random() * 3);
 }
 
 function tryBuild(s, p) {
@@ -1329,7 +1393,7 @@ function tryBuild(s, p) {
   if (Object.keys(missing).length) {
     if (s.hintCd <= 0) {
       s.hintCd = 4;
-      fxPlayerMsg(p.index, `Für ${s.b.name} fehlt im Lager noch: ${matText(missing)}`, 3000);
+      fxPlayerMsg(p.index, `Für ${s.b.name} fehlt im Burglager noch: ${matText(missing)}`, 3000);
     }
     return;
   }
@@ -1340,6 +1404,43 @@ function tryBuild(s, p) {
   fxSfx('levelUp');
   if (s.b.id === 'tower') for (const q of players) q.lives = Math.min(5, q.lives + 1);
 }
+
+// Sachen fliegen in hohem Bogen aus dem Rucksack in die Truhe
+const flyers = [];
+function flyToChest(from, icons) {
+  icons.forEach((icon, i) => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const ctx = cv.getContext('2d');
+    ctx.font = '52px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(icon, 32, 52);
+    const tex = new THREE.CanvasTexture(cv);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+    sp.scale.setScalar(0.8);
+    sp.renderOrder = 12;
+    sp.visible = false;
+    scene.add(sp);
+    flyers.push({ sp, t: -i * 0.08, sx: from.x, sz: from.z });
+  });
+  sfx.pickup();
+}
+function updateFlyers(dt) {
+  for (const f of [...flyers]) {
+    f.t += dt / 0.7;
+    if (f.t < 0) continue;
+    const t = Math.min(1, f.t);
+    f.sp.visible = true;
+    f.sp.position.set(f.sx + (chest.position.x - f.sx) * t, 1.5 + Math.sin(t * Math.PI) * 3 - t * 0.5, f.sz + (chest.position.z - f.sz) * t);
+    if (t >= 1) {
+      scene.remove(f.sp);
+      f.sp.material.map.dispose();
+      flyers.splice(flyers.indexOf(f), 1);
+      chestBounce = 1;
+    }
+  }
+}
+let chestBounce = 0;
 
 // Riesen-Seifenblasen fliegen vom Katapult in hohem Bogen zur feindlichen Burg
 const bigBubbles = [];
@@ -1361,19 +1462,21 @@ function moveBubble(b, dt) {
 
 let catapultT = 6;
 function updateBuildLogic(dt) {
-  // Rucksack in der Burg ausladen
+  // Auf die Ablade-Fläche laufen: alles fliegt in die Truhe
   for (const p of alivePlayers()) {
-    if (!packCount(p) || !inCastle(p.root.position)) continue;
+    if (!packCount(p) || !onPad(p.root.position, UNLOAD.x, UNLOAD.z)) continue;
+    const icons = MATERIALS.flatMap((m) => Array(p.pack[m]).fill(MAT_ICON[m]));
     const text = matText(p.pack);
     for (const m of MATERIALS) { store[m] += p.pack[m]; p.pack[m] = 0; }
-    fxPlayerMsg(p.index, `Ausgeladen ins Burglager: ${text} 🏰`, 2500);
-    fxSfx('pickup');
+    flyToChest(p.root.position, icons);
+    emit(['u', p.root.position.x, p.root.position.z, icons]);
+    fxPlayerMsg(p.index, `Ab ins Burglager: ${text} 🏰`, 2500);
   }
-  // Bauplätze betreten
+  // Werkstatt: auf eine Fläche stellen
   for (const s of sites) {
     s.hintCd -= dt;
     if (built[s.b.id]) continue;
-    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - s.b.x, q.root.position.z - s.b.z) < 2.2);
+    const p = alivePlayers().find((q) => onPad(q.root.position, s.b.px, s.b.pz));
     if (p) tryBuild(s, p);
   }
   // Heilbrunnen
@@ -1393,7 +1496,7 @@ function updateBuildLogic(dt) {
     const foes = enemies.filter((e) => !e.dying);
     if (foes.length) {
       const e = foes[Math.floor(Math.random() * foes.length)];
-      const b = launchBubble({ x: -8, z: 58 }, { x: e.root.position.x, z: e.root.position.z });
+      const b = launchBubble({ x: -7, z: 54 }, { x: e.root.position.x, z: e.root.position.z });
       fxSfx('bubble');
       catapultSwing = 1;
       emit(['k']);
@@ -1413,11 +1516,24 @@ function updateBuildLogic(dt) {
 const garden = { t: 5 };
 
 let catapultSwing = 0;
+let padPulse = 0;
 function poseBuilds(dt) {
   const arm = sites[0].model?.userData.arm;
   if (arm) {
     catapultSwing = Math.max(0, catapultSwing - dt * 2);
     arm.rotation.x = -Math.sin(catapultSwing * Math.PI) * 1.2;
+  }
+  updateFlyers(dt);
+  chestBounce = Math.max(0, chestBounce - dt * 4);
+  chest.scale.setScalar(1 + Math.sin(chestBounce * Math.PI) * 0.15);
+  // Flächen leuchten: gelb = genug im Lager, grün = schon gebaut
+  padPulse += dt;
+  unloadPad.material.opacity = 0.75 + Math.sin(padPulse * 3) * 0.25;
+  for (const s of sites) {
+    const ready = Object.entries(s.b.cost).every(([m, n]) => store[m] >= n);
+    const state = built[s.b.id] ? 'built' : ready ? 'ready' : 'normal';
+    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? '✔ gebaut' : matText(s.b.cost), state });
+    s.pad.material.opacity = state === 'ready' ? 0.75 + Math.sin(padPulse * 5) * 0.25 : 1;
   }
   const bar = $('store');
   if (bar) {
@@ -1452,7 +1568,7 @@ function spawnMaterials(dt) {
   for (let n = 0; n < 20; n++) {
     const a = Math.random() * Math.PI * 2, r = 10 + Math.random() * 20;
     const x = base.x + Math.sin(a) * r, z = base.z + Math.cos(a) * r;
-    if (!blockedSpot(x, z) && !inCastle({ x, z })) { dropItem(type, { x, z }); return; }
+    if (!blockedSpot(x, z) && !inCastle({ x, z }) && !(x < -8 && x > -24 && z > 52 && z < 68)) { dropItem(type, { x, z }); return; }
   }
 }
 
@@ -1630,6 +1746,7 @@ function applySnapshot(s) {
     if (type === 'c') { const e = remote.enemies.get(a) || remote.animals.get(a); if (e) { e.hit = 0.15; flash(e.h, 0xffffff); } }
     if (type === 'w') setWait(a, b);
     if (type === 'k') catapultSwing = 1;
+    if (type === 'u') flyToChest({ x: a, z: b }, c);
   }
 }
 
@@ -1672,6 +1789,7 @@ function startGame(newMode) {
   if (mode === 'host') players = [createPlayer(0, 'all', 'local'), createPlayer(1, 'all', 'remote')];
   if (mode === 'client') players = [createPlayer(0, 'all', 'remote'), createPlayer(1, 'all', 'local')];
   players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
+  if (mode !== 'local') players[me].hud.appendChild($('store'));
   if (isSim()) {
     spawnAllEnemies();
     if (kid) spawnKidWorld();
