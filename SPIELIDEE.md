@@ -40,6 +40,13 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
   - Zauberstab, Zauberkugeln, Sternenstab und Seifenblasen-Kanone statt Mistgabel, Bogen, Feuerschwert und Maschinengewehr
   - Rote Schelme kämpfen mit Kissen und Schneebällen und werden in Frösche verzaubert statt besiegt
   - Tierfreunde laufen mit und schubsen freche Schelme weg
+  - Rucksack (10 Plätze): Holz 🪵 und Steine 🪨 liegen in der Welt, Seife 🧼 und Sternenstaub ✨ lassen verzauberte Schelme fallen
+  - In der eigenen Burg wird der Rucksack automatisch ins Burglager ausgeladen
+  - Bauplätze an der Burg (einfach draufstellen, wenn genug im Lager ist):
+    - 🫧 Seifenblasen-Katapult (🪵6 🧼3 ✨2): schießt alle 10 Sekunden eine Riesen-Seifenblase auf die Schelme
+    - ⛲ Heilbrunnen (🪨5 🧼1): schnell Energie auftanken
+    - 🌳 Apfelgarten (🪵3 🪨2): wachsen Äpfel zum Tierefüttern
+    - 🏰 Festturm mit goldener Flagge (🪨6 🪵2 ✨3): jeder bekommt ein Extra-Leben
   - Äpfel zum Einsammeln (+20 Energie), höchster Rang heißt „Burgheld“
   - Beim Netzwerkspiel gilt die Einstellung von dem, der das Spiel erstellt
 - Mit „Kinderfreundlich: Aus“ ist es die Ritter-Version unten (eher für ältere Kinder)
@@ -62,4 +69,5 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 
 - Start: `python -m http.server 8123` im Projektordner, dann http://localhost:8123 öffnen
 - Netzwerkspiel über WebRTC (PeerJS): wer das Spiel erstellt, rechnet alles; der Mitspieler schickt nur Tasten
-- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne, net.js Netzwerk)
+- Sprachchat beim Internetspiel: direkte WebRTC-Audioverbindung über PeerJS, startet automatisch, Stumm- und Auflegen-Knopf, nichts wird gespeichert. Mikrofon-Einstellungen wie im Sprachchat von RA-Skywalk; Twilio und LiveKit aus RA-Skywalk passen hier nicht, weil sie Server und Konten brauchen
+- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne, net.js Netzwerk, voice.js Sprachchat)

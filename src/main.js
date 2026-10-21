@@ -166,6 +166,7 @@ function resetPlayer(p) {
   p.out = false;
   p.special = null;
   p.apples = 0;
+  p.pack = { wood: 0, stone: 0, soap: 0, star: 0 };
   p.weapon = p.baseWeapon = p.startWeapon;
   setWeapon(p.h, wModel(p.weapon));
   applyLevel(p);
@@ -198,7 +199,8 @@ function updateHud(p) {
   const xp = p.level >= MAX_LEVEL ? 'Höchster Rang erreicht!'
     : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
   const xpLine = kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · ${xp}` : xp;
-  const key = [hp, p.level, lives, weapon, xpLine].join('|');
+  const packLine = kid ? `🎒 Rucksack (${packCount(p)}/${PACK_SIZE}): ${matText(p.pack) || 'leer'}` : '';
+  const key = [hp, p.level, lives, weapon, xpLine, packLine].join('|');
   if (key === p.hudCache) return;
   p.hudCache = key;
   const fill = p.hud.querySelector('.fill');
@@ -209,6 +211,7 @@ function updateHud(p) {
   p.hud.querySelector('.lives').textContent = lives;
   p.hud.querySelector('.weapon').textContent = weapon;
   p.hud.querySelector('.xp').textContent = xpLine;
+  p.hud.querySelector('.pack').textContent = packLine;
   drawBar(p.bar, hp / 100);
 }
 
@@ -364,6 +367,7 @@ function killCreature(c, p) {
     addKill(p);
     if (kid) { fxFloat('Verzaubert! 🐸', '#a5ff8a', pos); fxSfx('poof'); }
     const r = Math.random();
+    if (kid) dropItem(Math.random() < 0.5 ? 'soap' : 'star', { x: pos.x + 0.8, z: pos.z });
     if (r < 0.3) dropItem('heart', pos);
     else if (r < 0.4) dropItem('life', pos);
     else if (r < 0.65) dropItem(Math.random() < 0.5 ? 'gun' : 'firesword', pos);
@@ -391,7 +395,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -407,6 +411,25 @@ function makeItemEntity(type, x, z) {
     bone.rotation.z = 1.1;
     model.add(bone, mesh(new THREE.SphereGeometry(0.22, 10, 8), std(0x9c4a1c), 0.12, 0.06, -0.1));
   }
+  if (type === 'wood') {
+    for (const [y, x] of [[0, -0.15], [0, 0.15], [0.22, 0]]) {
+      const log = mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.7, 8), std(0x7b4a2e), x, y, 0);
+      log.rotation.z = Math.PI / 2;
+      model.add(log);
+    }
+  }
+  if (type === 'stone') {
+    const st = mesh(new THREE.IcosahedronGeometry(0.25, 0), std(0x9e9e9e, { flatShading: true }));
+    st.scale.set(1.2, 0.8, 1);
+    model.add(st);
+  }
+  if (type === 'soap') {
+    model.add(mesh(new THREE.BoxGeometry(0.4, 0.18, 0.26), std(0xf48fb1, { roughness: 0.3 })));
+    for (const [x, y] of [[0.1, 0.2], [-0.1, 0.3], [0.05, 0.42]]) {
+      model.add(mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshStandardMaterial({ color: 0xe1f5fe, transparent: true, opacity: 0.6 }), x, y, 0));
+    }
+  }
+  if (type === 'star') model.add(mesh(new THREE.OctahedronGeometry(0.22), new THREE.MeshStandardMaterial({ color: 0xfff176, emissive: 0xffd54f, emissiveIntensity: 1.5 })));
   if (type === 'milk') {
     model.add(mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.4, 14), std(0xfafafa, { roughness: 0.2 })));
     model.add(mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.12, 12), std(0xfafafa, { roughness: 0.2 }), 0, 0.26, 0));
@@ -447,6 +470,19 @@ function dropItem(type, pos) {
 
 function pickUp(item, p) {
   const pos = p.root.position;
+  if (MATERIALS.includes(item.type)) {
+    if (packCount(p) >= PACK_SIZE) {
+      if ((p.fullHintT || 0) < performance.now()) {
+        p.fullHintT = performance.now() + 4000;
+        fxPlayerMsg(p.index, '🎒 Rucksack voll! Bring alles in eure Burg.', 2500);
+      }
+      return false;
+    }
+    p.pack[item.type]++;
+    fxFloat(`+1 ${MAT_ICON[item.type]} ${MAT_NAME[item.type]}`, '#ffffff', pos);
+    fxSfx('pickup');
+    return true;
+  }
   if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); fxFloat('+30 ❤', '#ff8a80', pos); }
   if (item.type === 'apple') {
     if (p.apples < 9) { p.apples++; fxFloat(`+1 🍎 (${p.apples})`, '#ff8a80', pos); }
@@ -468,8 +504,8 @@ function pickUp(item, p) {
 function updateItems(dt) {
   for (const it of [...items]) {
     const p = alivePlayers().find((q) => q.root.position.distanceTo(it.g.position) < 1.6);
-    if (p) pickUp(it, p);
-    if (p || it.t > 30) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
+    const taken = p && pickUp(it, p) !== false;
+    if (taken || it.t > (MATERIALS.includes(it.type) ? 60 : 30)) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
   }
 }
 
@@ -478,7 +514,8 @@ function poseItems(dt) {
     it.t += dt;
     it.model.rotation.y += dt * 2;
     it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15;
-    it.g.visible = it.t < 25 || Math.floor(it.t * 6) % 2 === 0;   // blinkt kurz vor dem Verschwinden
+    const life = MATERIALS.includes(it.type) ? 60 : 30;
+    it.g.visible = it.t < life - 5 || Math.floor(it.t * 6) % 2 === 0;   // blinkt kurz vor dem Verschwinden
   }
 }
 
@@ -1174,6 +1211,253 @@ function spawnKidWorld() {
   for (let i = 0; i < 16; i++) spawnAnimal();
 }
 
+// ================= Kinderfreundlich: Rucksack, Burglager und Bauen =================
+// Holz, Steine, Seife und Sternenstaub sammeln, in der eigenen Burg ausladen und auf den Bauplätzen etwas bauen.
+const MATERIALS = ['wood', 'stone', 'soap', 'star'];
+const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨' };
+const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub' };
+const PACK_SIZE = 10;
+const store = { wood: 0, stone: 0, soap: 0, star: 0 };
+const packCount = (p) => MATERIALS.reduce((n, m) => n + p.pack[m], 0);
+const matText = (o) => MATERIALS.filter((m) => o[m] > 0).map((m) => `${MAT_ICON[m]}${o[m]}`).join(' ');
+const inCastle = (pos) => Math.abs(pos.x - HOME.x) < 9.5 && pos.z > HOME.z - 9.5 && pos.z < HOME.z + 9.5;
+
+const BUILDS = [
+  { id: 'catapult', name: 'Seifenblasen-Katapult', icon: '🫧', x: -8, z: 60, cost: { wood: 6, soap: 3, star: 2 },
+    done: 'Das Katapult schießt jetzt Riesen-Seifenblasen auf die freche Burg!' },
+  { id: 'fountain', name: 'Heilbrunnen', icon: '⛲', x: -6, z: 74, cost: { stone: 5, soap: 1 },
+    done: 'Am Heilbrunnen bekommt ihr schnell wieder Energie.' },
+  { id: 'garden', name: 'Apfelgarten', icon: '🌳', x: -6, z: 86, cost: { wood: 3, stone: 2 },
+    done: 'Im Apfelgarten wachsen jetzt Äpfel für eure Tiere.' },
+  { id: 'tower', name: 'Festturm', icon: '🏰', x: 6, z: 86, cost: { stone: 6, wood: 2, star: 3 },
+    done: 'Eure Burg ist jetzt die schönste im Land! Jeder bekommt ein Extra-Leben.' },
+];
+const built = {};
+
+function labelSprite(text) {
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 128;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000a';
+  ctx.beginPath();
+  ctx.roundRect(4, 4, 504, 120, 24);
+  ctx.fill();
+  ctx.font = 'bold 42px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  const [a, b] = text.split('\n');
+  ctx.fillText(a, 256, 54);
+  ctx.font = '38px system-ui, sans-serif';
+  ctx.fillText(b || '', 256, 104);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+  sp.scale.set(4, 1, 1);
+  sp.renderOrder = 9;
+  return sp;
+}
+
+// Bauplätze: Schild mit Bauplan, solange noch nichts gebaut ist
+const sites = BUILDS.map((b) => {
+  const g = new THREE.Group();
+  g.position.set(b.x, 0, b.z);
+  const ring = mesh(new THREE.TorusGeometry(1.6, 0.06, 6, 28).rotateX(Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffd54f, emissiveIntensity: 0.6 }), 0, 0.05, 0);
+  const post = mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), std(0x7a5a3a), 0, 0.7, 0);
+  const label = labelSprite(`${b.icon} ${b.name}\n${matText(b.cost)}`);
+  label.position.y = 2.6;
+  g.add(ring, post, label);
+  scene.add(g);
+  return { b, g, model: null, hintCd: 0 };
+});
+const updateSitesVisible = () => sites.forEach((s) => (s.g.visible = kid && started && !built[s.b.id]));
+
+function makeBuildModel(id) {
+  const g = new THREE.Group();
+  const wood = std(0x8a6a44), stoneM = std(0xa39e93), bubble = new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent: true, opacity: 0.55, roughness: 0.1, emissive: 0x2a6f80 });
+  if (id === 'catapult') {
+    g.add(mesh(new THREE.BoxGeometry(2.6, 0.4, 3.4), wood, 0, 0.5, 0));
+    for (const s of [-1, 1]) {
+      const wheel = mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.2, 14), std(0x5d4037), s * 1.4, 0.6, 0);
+      wheel.rotation.z = Math.PI / 2;
+      g.add(wheel, mesh(new THREE.BoxGeometry(0.2, 1.6, 0.2), wood, s * 0.9, 1.4, 0.6));
+    }
+    const arm = new THREE.Group();
+    arm.position.set(0, 2.1, 0.6);
+    arm.add(mesh(new THREE.BoxGeometry(0.25, 0.25, 3.4), wood, 0, 0, -1.4));
+    arm.add(mesh(new THREE.SphereGeometry(0.7, 16, 12), bubble, 0, 0.6, -3));
+    g.add(arm);
+    g.userData.arm = arm;
+    g.rotation.y = Math.PI;   // zeigt zur feindlichen Burg
+  }
+  if (id === 'fountain') {
+    g.add(mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.6, 20), stoneM, 0, 0.3, 0));
+    g.add(mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.05, 20), new THREE.MeshStandardMaterial({ color: 0x4fc3f7, emissive: 0x0277bd, emissiveIntensity: 0.6 }), 0, 0.58, 0));
+    g.add(mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.4, 10), stoneM, 0, 1, 0));
+    g.add(mesh(new THREE.SphereGeometry(0.35, 12, 10), new THREE.MeshStandardMaterial({ color: 0x81d4fa, emissive: 0x4fc3f7, emissiveIntensity: 1 }), 0, 1.8, 0));
+    circles.push({ x: -6, z: 74, r: 1.6 });
+  }
+  if (id === 'garden') {
+    for (const [x, z] of [[-1.3, -0.8], [1.3, -0.6], [0, 1.2]]) {
+      g.add(mesh(new THREE.CylinderGeometry(0.15, 0.2, 1.4, 7), std(0x5b3d26), x, 0.7, z));
+      g.add(mesh(new THREE.SphereGeometry(0.9, 12, 10), std(0x3f8f3a), x, 1.9, z));
+      for (let k = 0; k < 4; k++) g.add(mesh(new THREE.SphereGeometry(0.12, 8, 6), std(0xd32f2f), x + Math.sin(k * 1.7) * 0.7, 1.7 + (k % 2) * 0.4, z + Math.cos(k * 1.7) * 0.7));
+    }
+  }
+  if (id === 'tower') {
+    g.add(mesh(new THREE.CylinderGeometry(1.4, 1.6, 12, 18), stoneM, 0, 6, 0));
+    g.add(mesh(new THREE.ConeGeometry(1.9, 3, 18), std(0xd4af37, { metalness: 0.6, roughness: 0.3 }), 0, 13.5, 0));
+    g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 3), std(0x5d4037), 0, 16.5, 0));
+    g.add(mesh(new THREE.PlaneGeometry(1.8, 1.1), new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffb300, emissiveIntensity: 0.6, side: THREE.DoubleSide }), 0.9, 17.4, 0));
+    circles.push({ x: 6, z: 86, r: 1.6 });
+  }
+  return g;
+}
+
+function placeBuild(id) {
+  const s = sites.find((x) => x.b.id === id);
+  built[id] = true;
+  s.model = makeBuildModel(id);
+  s.model.position.set(s.b.x, 0, s.b.z);
+  scene.add(s.model);
+  updateSitesVisible();
+}
+
+function tryBuild(s, p) {
+  const missing = {};
+  for (const [m, n] of Object.entries(s.b.cost)) if (store[m] < n) missing[m] = n - store[m];
+  if (Object.keys(missing).length) {
+    if (s.hintCd <= 0) {
+      s.hintCd = 4;
+      fxPlayerMsg(p.index, `Für ${s.b.name} fehlt im Lager noch: ${matText(missing)}`, 3000);
+    }
+    return;
+  }
+  for (const [m, n] of Object.entries(s.b.cost)) store[m] -= n;
+  placeBuild(s.b.id);
+  emit(['b', s.b.id]);
+  fxGlobalMsg(`${s.b.icon} ${s.b.name} gebaut! ${s.b.done}`, 5000);
+  fxSfx('levelUp');
+  if (s.b.id === 'tower') for (const q of players) q.lives = Math.min(5, q.lives + 1);
+}
+
+// Riesen-Seifenblasen fliegen vom Katapult in hohem Bogen zur feindlichen Burg
+const bigBubbles = [];
+const bigBubbleGeo = new THREE.SphereGeometry(1.4, 20, 14);
+const bigBubbleMat = new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent: true, opacity: 0.55, roughness: 0.05, emissive: 0x4fc3f7, emissiveIntensity: 0.4 });
+function launchBubble(from, to, id = nextId++) {
+  const m = new THREE.Mesh(bigBubbleGeo, bigBubbleMat);
+  scene.add(m);
+  const b = { id, m, sx: from.x, sz: from.z, ex: to.x, ez: to.z, t: 0, dur: 3.5 };
+  bigBubbles.push(b);
+  return b;
+}
+function moveBubble(b, dt) {
+  b.t += dt / b.dur;
+  const t = Math.min(1, b.t);
+  b.m.position.set(b.sx + (b.ex - b.sx) * t, 3 + Math.sin(t * Math.PI) * 70, b.sz + (b.ez - b.sz) * t);
+  b.m.rotation.y += dt;
+}
+
+let catapultT = 6;
+function updateBuildLogic(dt) {
+  // Rucksack in der Burg ausladen
+  for (const p of alivePlayers()) {
+    if (!packCount(p) || !inCastle(p.root.position)) continue;
+    const text = matText(p.pack);
+    for (const m of MATERIALS) { store[m] += p.pack[m]; p.pack[m] = 0; }
+    fxPlayerMsg(p.index, `Ausgeladen ins Burglager: ${text} 🏰`, 2500);
+    fxSfx('pickup');
+  }
+  // Bauplätze betreten
+  for (const s of sites) {
+    s.hintCd -= dt;
+    if (built[s.b.id]) continue;
+    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - s.b.x, q.root.position.z - s.b.z) < 2.2);
+    if (p) tryBuild(s, p);
+  }
+  // Heilbrunnen
+  if (built.fountain) {
+    for (const p of alivePlayers()) if (Math.hypot(p.root.position.x + 6, p.root.position.z - 74) < 4.5) p.hp = Math.min(100, p.hp + 8 * dt);
+  }
+  // Apfelgarten
+  if (built.garden && (garden.t -= dt) <= 0) {
+    garden.t = 10;
+    if (items.filter((it) => it.type === 'apple' && Math.hypot(it.g.position.x + 6, it.g.position.z - 86) < 5).length < 4) {
+      dropItem('apple', { x: -6 + (Math.random() - 0.5) * 4, z: 83.5 });
+    }
+  }
+  // Katapult
+  if (built.catapult && (catapultT -= dt) <= 0) {
+    catapultT = 10;
+    const foes = enemies.filter((e) => !e.dying);
+    if (foes.length) {
+      const e = foes[Math.floor(Math.random() * foes.length)];
+      const b = launchBubble({ x: -8, z: 58 }, { x: e.root.position.x, z: e.root.position.z });
+      fxSfx('bubble');
+      catapultSwing = 1;
+      emit(['k']);
+      b.onLand = () => {
+        fxSfx('poof');
+        for (const f of enemies) {
+          if (!f.dying && Math.hypot(f.root.position.x - b.ex, f.root.position.z - b.ez) < 7) hitCreature(f, players[0], 15, 0, 0);
+        }
+      };
+    }
+  }
+  for (const b of [...bigBubbles]) {
+    moveBubble(b, dt);
+    if (b.t >= 1) { b.onLand?.(); scene.remove(b.m); bigBubbles.splice(bigBubbles.indexOf(b), 1); }
+  }
+}
+const garden = { t: 5 };
+
+let catapultSwing = 0;
+function poseBuilds(dt) {
+  const arm = sites[0].model?.userData.arm;
+  if (arm) {
+    catapultSwing = Math.max(0, catapultSwing - dt * 2);
+    arm.rotation.x = -Math.sin(catapultSwing * Math.PI) * 1.2;
+  }
+  const bar = $('store');
+  if (bar) {
+    bar.hidden = !(kid && started);
+    const t = `🏰 Burglager: ${MATERIALS.map((m) => `${MAT_ICON[m]} ${store[m]}`).join('  ')}`;
+    if (bar.textContent !== t) bar.textContent = t;
+  }
+}
+
+function resetBuilds() {
+  for (const m of MATERIALS) store[m] = 0;
+  for (const s of sites) {
+    if (s.model) { scene.remove(s.model); s.model = null; }
+    built[s.b.id] = false;
+  }
+  for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === 6 && c.z === 86)) circles.splice(circles.indexOf(c), 1);
+  for (const b of bigBubbles) scene.remove(b.m);
+  bigBubbles.length = 0;
+  updateSitesVisible();
+}
+
+// Holz und Steine tauchen in der Nähe der Spieler auf
+let matTimer = 2;
+function spawnMaterials(dt) {
+  if (!kid || (matTimer -= dt) > 0) return;
+  matTimer = 4;
+  const type = Math.random() < 0.55 ? 'wood' : 'stone';
+  if (items.filter((it) => it.type === type).length >= 10) return;
+  const ps = alivePlayers();
+  if (!ps.length) return;
+  const base = ps[Math.floor(Math.random() * ps.length)].root.position;
+  for (let n = 0; n < 20; n++) {
+    const a = Math.random() * Math.PI * 2, r = 10 + Math.random() * 20;
+    const x = base.x + Math.sin(a) * r, z = base.z + Math.cos(a) * r;
+    if (!blockedSpot(x, z) && !inCastle({ x, z })) { dropItem(type, { x, z }); return; }
+  }
+}
+
+updateSitesVisible();
+
 // Kinderfreundlich: Äpfel liegen in der Nähe der Spieler herum
 let appleTimer = 3;
 function spawnApples(dt) {
@@ -1219,6 +1503,7 @@ function resetGame() {
     for (const c of cages) { scene.remove(c.root); if (circles.includes(c.circle)) circles.splice(circles.indexOf(c.circle), 1); }
     cages.length = 0;
     pending = [];
+    resetBuilds();
     spawnKidWorld();
   }
 }
@@ -1231,7 +1516,7 @@ function buildSnapshot() {
     t: 's',
     p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
       p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
-      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples]),
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m])]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
     a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
@@ -1241,6 +1526,9 @@ function buildSnapshot() {
     c: cages.map((c) => [c.id, r2(c.root.position.x), r2(c.root.position.z), c.hp, r2(c.dying)]),
     z: wizard ? [r2(wizard.root.rotation.y), r2(wizard.wind), r2(wizard.gone)] : null,
     fr: freed,
+    st: MATERIALS.map((m) => store[m]),
+    bl: Object.keys(built).filter((k) => built[k]),
+    bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     ev: netEvents.splice(0),
   };
 }
@@ -1262,8 +1550,9 @@ function applySnapshot(s) {
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
-    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples] = row;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack] = row;
     p.apples = apples || 0;
+    if (pack) MATERIALS.forEach((m, k) => (p.pack[m] = pack[k]));
     p.tx = x; p.tz = z;
     p.heading = heading; p.bodyYaw = bodyYaw;
     p.hp = hp; p.lives = lives; p.kills = kills; p.out = !!out; p.moving = moving;
@@ -1291,6 +1580,19 @@ function applySnapshot(s) {
     },
     (c) => scene.remove(c.root));
   freed = s.fr || 0;
+  if (s.st) MATERIALS.forEach((m, k) => (store[m] = s.st[k]));
+  if (s.bl) {
+    for (const id of s.bl) if (!built[id]) placeBuild(id);
+    if (!s.bl.length && Object.values(built).some(Boolean)) resetBuilds();
+  }
+  const seenB = new Set();
+  for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
+    seenB.add(id);
+    let b = bigBubbles.find((x) => x.id === id);
+    if (!b) b = launchBubble({ x: sx, z: sz }, { x: ex, z: ez }, id);
+    b.t = t;
+  }
+  for (const b of [...bigBubbles]) if (!seenB.has(b.id)) { scene.remove(b.m); bigBubbles.splice(bigBubbles.indexOf(b), 1); }
   syncMap(remote.cages, s.c || [],
     ([id, x, z]) => {
       const root = makeCage();
@@ -1327,6 +1629,7 @@ function applySnapshot(s) {
     if (type === 'h') hurtVisual(players[a]);
     if (type === 'c') { const e = remote.enemies.get(a) || remote.animals.get(a); if (e) { e.hit = 0.15; flash(e.h, 0xffffff); } }
     if (type === 'w') setWait(a, b);
+    if (type === 'k') catapultSwing = 1;
   }
 }
 
@@ -1375,6 +1678,7 @@ function startGame(newMode) {
     else for (let i = 0; i < 12; i++) spawnAnimal();
   }
   started = true;
+  updateSitesVisible();
   $('tAttack').textContent = kid ? '🪄' : '⚔️';
   const goal = kid ? 'Der böse Zauberer hat Tiere eingesperrt: befreit sie alle! Äpfel 🍎 sammeln, Tiere füttern, ab in den Stall.' : 'Erobere die rote Burg!';
   const swapKey = isTouch ? '🔄' : 'Q / Shift';
@@ -1493,6 +1797,8 @@ function step(dt) {
       players.forEach((p) => (p.justAttacked = false));
       updateProjectiles(dt);
       spawnApples(dt);
+      spawnMaterials(dt);
+      updateBuildLogic(dt);
       updateCages(dt);
       updateWizardLogic(dt);
       updateItems(dt);
@@ -1507,11 +1813,13 @@ function step(dt) {
       remote.enemies.forEach((e) => poseEnemy(e, dt));
       remote.animals.forEach((c) => poseAnimal(c, dt));
       remote.cages.forEach((c) => poseCage(c, dt));
+      bigBubbles.forEach((b) => moveBubble(b, dt));
       poseWizard(wizard, dt);
       remote.items.forEach((it) => { it.t += dt; it.model.rotation.y += dt * 2; it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15; });
     }
     players.forEach((p) => posePlayer(p, dt));
     players.forEach(spectate);
+    poseBuilds(dt);
   }
   updateFrogs(dt);
   updateFloaters(scene, dt);

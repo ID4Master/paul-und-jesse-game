@@ -41,6 +41,11 @@
   body.full .half, body.full .pmsg { width: 100%; left: 0 !important; }
   body.full .hud { left: 12px !important; }
 
+  #store { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: #000a; color: #fff; padding: 6px 14px;
+           border-radius: 10px; font-size: 15px; white-space: nowrap; pointer-events: none; }
+  #store[hidden] { display: none; }
+  body.split #store { top: auto; bottom: 12px; }
+
   /* ---------- Sprachchat ---------- */
   #voice { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
            background: #000b; color: #fff; padding: 8px 12px; border-radius: 14px; border: 3px solid transparent; font-size: 15px;
@@ -121,6 +126,7 @@
   <div class="info"><span class="level"></span> &nbsp; <span class="lives"></span></div>
   <div class="info"><span class="weapon"></span></div>
   <div class="info small xp"></div>
+  <div class="info small pack"></div>
 </div>
 <div class="hud" id="hud1" style="left:calc(50% + 14px)">
   <div class="name">Spieler 2 <span class="keys"></span></div>
@@ -128,12 +134,14 @@
   <div class="info"><span class="level"></span> &nbsp; <span class="lives"></span></div>
   <div class="info"><span class="weapon"></span></div>
   <div class="info small xp"></div>
+  <div class="info small pack"></div>
 </div>
 
 <div class="pmsg" id="msg0" style="left:0"></div>
 <div class="pmsg" id="msg1" style="left:50%"></div>
 <div id="msg"></div>
 <button id="menuBtn">☰ Menü</button>
+<div id="store" hidden></div>
 
 <div id="voice" hidden>
   <span id="vStatus"></span>
