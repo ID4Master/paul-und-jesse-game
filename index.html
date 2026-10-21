@@ -59,6 +59,14 @@
   .join button { margin: 0 !important; width: auto !important; }
   #netStatus { min-height: 1.4em; font-size: 16px; }
   #netStatus b { font-size: 32px; letter-spacing: 6px; color: #ffd54f; }
+  .switch { display: inline-flex; align-items: center; gap: 10px; font-size: 18px; font-weight: bold; cursor: pointer; }
+  .switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .switch .track { position: relative; width: 54px; height: 30px; border-radius: 15px; background: #6b7280; transition: background .2s; }
+  .switch .thumb { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: left .2s; }
+  .switch input:checked + .track { background: #4caf50; }
+  .switch input:checked + .track .thumb { left: 27px; }
+  .switch input:focus-visible + .track { outline: 3px solid #ffd54f; }
+  .howto.kidhint { margin: 6px 0 14px; min-height: 2.8em; }
   .howto { margin-top: 18px; font-size: 13px; opacity: .8; line-height: 1.5; }
   .mobileOnly { display: none; }
   body.touch .desk { display: none; }
@@ -125,7 +133,13 @@
 <div id="menu">
   <div class="panel">
     <h1>Knights in Castles</h1>
-    <p class="sub">Vom Bauern zum Kaiser: erobert die rote Burg!</p>
+    <p class="sub" id="menuSub"></p>
+    <label class="switch">
+      <input type="checkbox" id="kidToggle" checked>
+      <span class="track"><span class="thumb"></span></span>
+      <span>Kinderfreundlich</span>
+    </label>
+    <p class="howto kidhint" id="kidHint"></p>
     <div id="menuMain">
       <button class="big" id="btnSingle">🧑‍🌾 Einzelspieler</button>
       <button class="big desk" id="btnLocal">👥 Zu zweit an einer Tastatur</button>
@@ -134,13 +148,13 @@
     </div>
     <div id="menuNet" hidden>
       <button class="big" id="btnHost">🏰 Spiel erstellen</button>
-      <p class="howto">oder den Code vom anderen Spieler eingeben:</p>
+      <p class="howto">oder den Code vom anderen Spieler eingeben (es gilt die Einstellung von dem, der das Spiel erstellt):</p>
       <div class="join"><input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"><button class="big" id="btnJoin">Beitreten</button></div>
       <p id="netStatus"></p>
       <button class="small" id="btnBack">← Zurück</button>
     </div>
     <div class="howto desk">
-      Einzelspieler und Internet: W A S D oder Pfeiltasten laufen, Leertaste oder Enter angreifen, Q oder Shift Waffe wechseln.<br>
+      Einzelspieler und Internet: W A S D oder Pfeiltasten laufen, Leertaste oder Enter angreifen, Q oder Shift wechseln.<br>
       Zu zweit an einer Tastatur: Spieler 1 W A S D + Leertaste + Q, Spieler 2 Pfeiltasten + Enter + Shift rechts.
     </div>
   </div>

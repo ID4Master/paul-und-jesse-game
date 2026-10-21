@@ -63,6 +63,81 @@ function makeGun() {
   return g;
 }
 
+// ---------- Kinderfreundliche Sachen in der Hand ----------
+const glow = (color, intensity = 1.5) => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: intensity, roughness: 0.3 });
+
+function starGeo(r) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2, rr = i % 2 ? r * 0.45 : r;
+    const x = Math.sin(a) * rr, y = Math.cos(a) * rr;
+    i ? s.lineTo(x, y) : s.moveTo(x, y);
+  }
+  return new THREE.ExtrudeGeometry(s, { depth: r * 0.3, bevelEnabled: false }).center();
+}
+
+function makeWand(tip) {
+  const g = new THREE.Group();
+  const stick = mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.9, 8), std(0x7b4a2e), 0, 0, 0.35);
+  stick.rotation.x = Math.PI / 2;
+  g.add(stick);
+  if (tip === 'star') g.add(mesh(starGeo(0.14), glow(0xffd54f), 0, 0, 0.85));
+  else g.add(mesh(new THREE.SphereGeometry(0.1, 14, 10), glow(0x40c4ff), 0, 0, 0.85));
+  return g;
+}
+
+function makeStarStaff() {
+  const g = new THREE.Group();
+  const stick = mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.4, 8), metal(0xd4af37), 0, 0, 0.55);
+  stick.rotation.x = Math.PI / 2;
+  g.add(stick, mesh(starGeo(0.3), glow(0xffe082, 2), 0, 0, 1.3));
+  return g;
+}
+
+function makeBubbler() {
+  const g = new THREE.Group();
+  const tube = mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 12), std(0xff8ac8), 0, 0.05, 0.3);
+  tube.rotation.x = Math.PI / 2;
+  const ring = mesh(new THREE.TorusGeometry(0.16, 0.025, 8, 20), std(0x7ee8fa), 0, 0.05, 0.7);
+  const bubble = mesh(new THREE.SphereGeometry(0.14, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent: true, opacity: 0.45, roughness: 0.1 }), 0, 0.12, 0.85);
+  g.add(tube, ring, bubble, mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), std(0xffd54f), 0, -0.1, 0.15));
+  return g;
+}
+
+function makePillow() {
+  const g = new THREE.Group();
+  const pillow = mesh(new THREE.BoxGeometry(0.4, 0.14, 0.6), std(0xf5f0ff), 0, 0, 0.45);
+  pillow.scale.set(1, 1, 1);
+  g.add(pillow, mesh(new THREE.BoxGeometry(0.42, 0.04, 0.05), std(0xff8a80), 0, 0.05, 0.45));
+  return g;
+}
+
+function makeSnowball() {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.SphereGeometry(0.11, 12, 10), std(0xffffff), 0, 0, 0.06));
+  return g;
+}
+
+// Kleiner Frosch: so sehen verzauberte Schelme aus
+export function makeFrog() {
+  const g = new THREE.Group();
+  const green = std(0x4caf50), white = std(0xffffff);
+  const body = mesh(new THREE.SphereGeometry(0.3, 14, 10), green, 0, 0.25, 0);
+  body.scale.set(1, 0.7, 1.2);
+  g.add(body);
+  for (const s of [-1, 1]) {
+    g.add(mesh(new THREE.SphereGeometry(0.09, 10, 8), white, s * 0.12, 0.48, 0.2));
+    g.add(mesh(new THREE.SphereGeometry(0.045, 8, 6), eyeMat, s * 0.12, 0.5, 0.28));
+    const leg = mesh(new THREE.SphereGeometry(0.12, 10, 8), green, s * 0.25, 0.1, -0.15);
+    leg.scale.set(0.7, 0.5, 1.3);
+    g.add(leg);
+  }
+  const crown = mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.07, 8, 1, true), metal(0xd4af37), 0, 0.5, 0.05);
+  g.add(crown);
+  return g;
+}
+
 // ---------- Menschen ----------
 export function makeHuman(o) {
   const root = new THREE.Group();
@@ -138,6 +213,12 @@ export function makeHuman(o) {
     if (w === 'sword') add(w, makeSword(false));
     if (w === 'firesword') add(w, makeSword(true));
     if (w === 'gun') add(w, makeGun());
+    if (w === 'wand') add(w, makeWand('star'));
+    if (w === 'orbwand') add(w, makeWand('orb'));
+    if (w === 'starstaff') add(w, makeStarStaff());
+    if (w === 'bubbler') add(w, makeBubbler());
+    if (w === 'pillow') add(w, makePillow());
+    if (w === 'snowball') add(w, makeSnowball());
   }
   setWeapon(h, o.weapons[0]);
   if (o.shield) {
@@ -305,6 +386,8 @@ export function animateAnimal(a, phase, moving) {
 
 // Kleines Waffenmodell, z. B. für Gegenstände am Boden
 export function makeWeaponModel(name) {
+  if (name === 'starstaff') return makeStarStaff();
+  if (name === 'bubbler') return makeBubbler();
   if (name === 'gun') return makeGun();
   if (name === 'firesword') return makeSword(true);
   if (name === 'bow') return makeBow();

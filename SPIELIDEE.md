@@ -33,6 +33,13 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 - Online: https://id4master.github.io/paul-und-jesse-game/
 - Startmenü: Einzelspieler, zu zweit an einer Tastatur (Splitscreen), zu zweit übers Internet (Code mit 4 Buchstaben)
 - Auf dem Handy nur Einzelspieler, mit Joystick links und Knöpfen rechts
+- Schalter „Kinderfreundlich“ im Startmenü (Standard: An, für Paul und Jesse mit 9 und 10 Jahren):
+  - Zauberstab, Zauberkugeln, Sternenstab und Seifenblasen-Kanone statt Mistgabel, Bogen, Feuerschwert und Maschinengewehr
+  - Rote Schelme kämpfen mit Kissen und Schneebällen und werden in Frösche verzaubert statt besiegt
+  - Tiere werden nicht gejagt: Wer zu ihnen hingeht, gewinnt einen Freund, der 40 Sekunden mitläuft und hilft
+  - Äpfel zum Einsammeln (+20 Energie), höchster Rang heißt „Burgheld“
+  - Beim Netzwerkspiel gilt die Einstellung von dem, der das Spiel erstellt
+- Mit „Kinderfreundlich: Aus“ ist es die Ritter-Version unten (eher für ältere Kinder)
 
 - Zwei Bauern mit geteiltem Bildschirm, jeder levelt für sich
   - Spieler 1 (links): W A S D laufen, Leertaste angreifen, Q Waffe wechseln

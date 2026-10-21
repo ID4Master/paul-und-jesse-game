@@ -90,6 +90,10 @@ export const sfx = {
   windup: () => beep(300, 0.25, 'sine', 0.03, 600),
   pickup: () => [660, 880].forEach((f, i) => beep(f, 0.1, 'square', 0.05, 0, i * 0.08)),
   levelUp: () => [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.18, 'square', 0.05, 0, i * 0.12)),
+  magic: () => [880, 1320, 1760].forEach((f, i) => beep(f, 0.08, 'sine', 0.04, 0, i * 0.04)),
+  bubble: () => beep(600, 0.08, 'sine', 0.04, 1200),
+  plop: () => beep(220, 0.15, 'sine', 0.08, 110),
+  poof: () => [523, 784, 1047, 1568].forEach((f, i) => beep(f, 0.12, 'triangle', 0.05, 0, i * 0.06)),
   lifeLost: () => [392, 330, 262].forEach((f, i) => beep(f, 0.25, 'triangle', 0.06, 0, i * 0.2)),
 };
 

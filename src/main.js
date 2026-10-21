@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { std, metal, mesh, move, solidAt, angleDiff } from './util.js';
+import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot } from './util.js';
 import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot } from './world.js';
-import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel } from './characters.js';
+import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 
@@ -49,6 +49,22 @@ const WEAPONS = {
   firesword: { name: 'Feuerschwert', icon: '🔥', melee: true, range: 4.4, cone: -0.2, dmg: 25, cd: 0.4, special: true },
   gun:       { name: 'Maschinengewehr', icon: '💥', melee: false, dmg: 5, cd: 0.1, speed: 60, projectile: 'bullet', special: true },
 };
+
+// ================= Kinderfreundlich (Schalter im Startmenü) =================
+// Gleiches Spiel, aber Zauberstab statt Waffen, Schelme werden verzaubert, Tiere werden Freunde.
+let kid = true;
+try { kid = localStorage.getItem('kic-kid') !== '0'; } catch { /* ohne Speicher bleibt es an */ }
+const KID = {
+  fork:      { name: 'Zauberstab', icon: '🪄', model: 'wand' },
+  bow:       { name: 'Zauberkugeln', icon: '✨', model: 'orbwand' },
+  firesword: { name: 'Sternenstab', icon: '⭐', model: 'starstaff' },
+  gun:       { name: 'Seifenblasen-Kanone', icon: '🫧', model: 'bubbler' },
+};
+const wName = (w) => (kid ? KID[w].name : WEAPONS[w].name);
+const wIcon = (w) => (kid ? KID[w].icon : WEAPONS[w].icon);
+const wModel = (w) => (kid ? KID[w].model : w);
+const rankName = (l) => (kid && l === MAX_LEVEL ? 'Burgheld' : RANKS[l]);
+const snd = (normal, kidSound) => (kid ? kidSound : normal);
 
 // ================= Spielmodus =================
 // single: ein Spieler · local: zwei an einer Tastatur · host/client: zwei übers Internet
@@ -122,14 +138,14 @@ function createPlayer(index, keymap, source) {
     index, name: 'Spieler ' + (index + 1), startX: index ? 2.5 : -2.5, startWeapon: index ? 'bow' : 'fork',
     keymap: KEYMAPS[keymap], source, input: { fwd: 0, turn: 0, attack: false }, swapReq: false,
   };
-  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun'] });
+  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun', 'wand', 'orbwand', 'starstaff', 'bubbler'] });
   p.root = p.h.root;
   scene.add(p.root);
   p.bar = makeBar();
   p.root.add(p.bar);
   p.cam = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
   p.hud = $('hud' + index);
-  p.hud.querySelector('.keys').textContent = KEY_HINTS[keymap] || '';
+  p.hud.querySelector('.keys').textContent = (KEY_HINTS[keymap] || '').replace('angreifen', kid ? 'zaubern' : 'angreifen').replace('Waffe wechseln', kid ? 'Zauber wechseln' : 'Waffe wechseln');
   p.hudCache = '';
   p.walk = 0;
   resetPlayer(p);
@@ -149,7 +165,7 @@ function resetPlayer(p) {
   p.out = false;
   p.special = null;
   p.weapon = p.baseWeapon = p.startWeapon;
-  setWeapon(p.h, p.weapon);
+  setWeapon(p.h, wModel(p.weapon));
   applyLevel(p);
   setWait(p.index, null);
   respawn(p);
@@ -174,12 +190,11 @@ function respawn(p) {
 
 function updateHud(p) {
   const hp = Math.max(0, Math.round(p.hp));
-  const W = WEAPONS[p.weapon];
   const lives = '❤️'.repeat(Math.max(0, p.lives)) + '🖤'.repeat(Math.max(0, START_LIVES - p.lives));
-  const weapon = `${W.icon} ${W.name}` + (p.special && p.weapon === p.special.type ? ` (${Math.ceil(p.special.t)} s)` : '')
-    + (p.special && p.weapon !== p.special.type ? ` · ${WEAPONS[p.special.type].icon} bereit` : '');
+  const weapon = `${wIcon(p.weapon)} ${wName(p.weapon)}` + (p.special && p.weapon === p.special.type ? ` (${Math.ceil(p.special.t)} s)` : '')
+    + (p.special && p.weapon !== p.special.type ? ` · ${wIcon(p.special.type)} bereit` : '');
   const xp = p.level >= MAX_LEVEL ? 'Höchster Rang erreicht!'
-    : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} Gegner bis ${RANKS[p.level + 1]}`;
+    : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
   const key = [hp, p.level, lives, weapon, xp].join('|');
   if (key === p.hudCache) return;
   p.hudCache = key;
@@ -187,7 +202,7 @@ function updateHud(p) {
   fill.style.width = hp + '%';
   fill.style.background = hpColor(hp / 100);
   p.hud.querySelector('.hpnum').textContent = hp + ' / 100';
-  p.hud.querySelector('.level').textContent = `Level ${p.level + 1}: ${RANKS[p.level]}`;
+  p.hud.querySelector('.level').textContent = `Level ${p.level + 1}: ${rankName(p.level)}`;
   p.hud.querySelector('.lives').textContent = lives;
   p.hud.querySelector('.weapon').textContent = weapon;
   p.hud.querySelector('.xp').textContent = xp;
@@ -212,7 +227,7 @@ function hurtPlayer(p, rawDmg) {
   p.hp -= dmg;
   fxHurt(p);
   fxFloat('-' + dmg, '#ff5252', p.root.position);
-  fxSfx('hurt');
+  fxSfx(snd('hurt', 'plop'));
   if (p.hp <= 0) loseLife(p);
 }
 
@@ -221,7 +236,7 @@ function loseLife(p) {
   p.lives--;
   p.dead = 3;
   p.special = null;
-  if (WEAPONS[p.weapon].special) { p.weapon = p.baseWeapon; setWeapon(p.h, p.weapon); }
+  if (WEAPONS[p.weapon].special) { p.weapon = p.baseWeapon; setWeapon(p.h, wModel(p.weapon)); }
   fxSfx('lifeLost');
   if (p.lives > 0) {
     fxPlayerMsg(p.index, `Autsch! Noch ${p.lives} ${p.lives === 1 ? 'Leben' : 'Leben'}. Gleich geht es in der Burg weiter.`, 3000);
@@ -244,7 +259,7 @@ function addKill(p) {
     p.level = lvl;
     applyLevel(p);
     p.hp = 100;
-    fxPlayerMsg(p.index, `${p.name} ist jetzt ${RANKS[lvl]}! Neue Rüstung!`, 3000);
+    fxPlayerMsg(p.index, `${p.name} ist jetzt ${rankName(lvl)}! Neue Rüstung!`, 3000);
     fxSfx('levelUp');
   }
 }
@@ -254,14 +269,14 @@ function swapWeapon(p) {
   const list = ['fork', 'bow', ...(p.special ? [p.special.type] : [])];
   p.weapon = list[(list.indexOf(p.weapon) + 1) % list.length];
   if (!WEAPONS[p.weapon].special) p.baseWeapon = p.weapon;
-  setWeapon(p.h, p.weapon);
+  setWeapon(p.h, wModel(p.weapon));
 }
 
 // ================= Figuren-Modelle (für Rechner und Mitspieler gleich) =================
 function makeEnemyEntity(archer, x, z) {
   const h = makeHuman(archer
-    ? { shirt: 0x8e2424, pants: 0x3a3a3a, hair: 0x2b1b10, hood: 0x5a1414, weapons: ['bow'] }
-    : { shirt: 0xb71c1c, pants: 0x3a3a3a, hair: 0x2b1b10, helmet: true, shield: true, weapons: ['sword'] });
+    ? { shirt: 0x8e2424, pants: 0x3a3a3a, hair: 0x2b1b10, hood: 0x5a1414, weapons: [kid ? 'snowball' : 'bow'] }
+    : { shirt: 0xb71c1c, pants: 0x3a3a3a, hair: 0x2b1b10, helmet: true, shield: !kid, weapons: [kid ? 'pillow' : 'sword'] });
   h.root.position.set(x, 0, z);
   const bar = makeBar();
   h.root.add(bar);
@@ -283,7 +298,7 @@ function makeAnimalEntity(type, x, z) {
 }
 
 // ================= Gegner und Tiere (nur der Rechner) =================
-const targets = () => [...enemies, ...animals].filter((c) => !c.dying);
+const targets = () => (kid ? enemies : [...enemies, ...animals]).filter((c) => !c.dying);
 
 function spawnEnemy(slot, archer) {
   const [x, z] = (archer ? ARCHER_SPAWNS : GUARD_SPAWNS)[slot];
@@ -310,12 +325,12 @@ function spawnAnimal() {
 
 function hitCreature(c, p, dmg, dirX, dirZ) {
   if (c.dying) return;
-  let text = '-' + dmg, color = '#ffffff';
+  let text = (kid ? '✨' : '-') + dmg, color = kid ? '#b388ff' : '#ffffff';
   if (c.kind === 'enemy') {
     const now = performance.now();
     if (c.lastHit && c.lastHit.by !== p && now - c.lastHit.time < 1500) {
       dmg *= 2;   // Teamwork-Bonus
-      text = 'TEAM! -' + dmg;
+      text = 'TEAM! ' + (kid ? '✨' : '-') + dmg;
       color = '#ffd54f';
     }
     c.lastHit = { by: p, time: now };
@@ -328,7 +343,7 @@ function hitCreature(c, p, dmg, dirX, dirZ) {
   c.hp -= dmg;
   fxFlash(c);
   fxFloat(text, color, c.root.position);
-  fxSfx('hit');
+  fxSfx(snd('hit', 'magic'));
   move(c.root, dirX, dirZ, 0.5);
   c.bar.visible = true;
   drawBar(c.bar, c.hp / c.maxHp);
@@ -341,6 +356,7 @@ function killCreature(c, p) {
   const pos = c.root.position;
   if (c.kind === 'enemy') {
     addKill(p);
+    if (kid) { fxFloat('Verzaubert! 🐸', '#a5ff8a', pos); fxSfx('poof'); }
     const r = Math.random();
     if (r < 0.3) dropItem('heart', pos);
     else if (r < 0.4) dropItem('life', pos);
@@ -369,7 +385,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -385,8 +401,15 @@ function makeItemEntity(type, x, z) {
     bone.rotation.z = 1.1;
     model.add(bone, mesh(new THREE.SphereGeometry(0.22, 10, 8), std(0x9c4a1c), 0.12, 0.06, -0.1));
   }
+  if (type === 'apple') {
+    model.add(mesh(new THREE.SphereGeometry(0.2, 14, 10), std(0xd32f2f, { roughness: 0.4 })));
+    model.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.12, 5), std(0x5d4037), 0, 0.22, 0));
+    const leaf = mesh(new THREE.SphereGeometry(0.07, 8, 6), std(0x43a047), 0.07, 0.24, 0);
+    leaf.scale.set(1, 0.3, 0.6);
+    model.add(leaf);
+  }
   if (type === 'gun' || type === 'firesword') {
-    const w = makeWeaponModel(type);
+    const w = makeWeaponModel(wModel(type));
     w.rotation.y = Math.PI / 2;
     w.position.x = -0.5;
     model.add(w);
@@ -409,13 +432,14 @@ function dropItem(type, pos) {
 function pickUp(item, p) {
   const pos = p.root.position;
   if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); fxFloat('+30 ❤', '#ff8a80', pos); }
+  if (item.type === 'apple') { p.hp = Math.min(100, p.hp + 20); fxFloat('Mmh, Apfel! +20', '#ff8a80', pos); }
   if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); fxFloat('Lecker! +40', '#ffcc80', pos); }
   if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); fxFloat('+1 Leben', '#ffd54f', pos); }
   if (item.type === 'gun' || item.type === 'firesword') {
     p.special = { type: item.type, t: SPECIAL_TIME };
     p.weapon = item.type;
-    setWeapon(p.h, p.weapon);
-    fxPlayerMsg(p.index, `${WEAPONS[item.type].icon} ${WEAPONS[item.type].name} für ${SPECIAL_TIME} Sekunden!`);
+    setWeapon(p.h, wModel(p.weapon));
+    fxPlayerMsg(p.index, `${wIcon(item.type)} ${wName(item.type)} für ${SPECIAL_TIME} Sekunden!`);
   }
   fxSfx('pickup');
 }
@@ -444,9 +468,17 @@ const bulletGeo = new THREE.SphereGeometry(0.07, 6, 6);
 const arrowMat = std(0x8d6e4a), tipMat = metal(0x888888), redArrowMat = std(0x7a1010);
 const bulletMat = new THREE.MeshStandardMaterial({ color: 0xffee58, emissive: 0xffd000, emissiveIntensity: 2 });
 
+const orbMat = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x40c4ff, emissiveIntensity: 2 });
+const bubbleMat = new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent: true, opacity: 0.5, roughness: 0.1, emissive: 0x2a6f80 });
+const snowMat = std(0xffffff);
+const orbGeo = new THREE.SphereGeometry(0.15, 12, 10);
+
 function makeProjectileMesh(kind, owner) {
   let m;
-  if (kind === 'bullet') m = new THREE.Mesh(bulletGeo, bulletMat);
+  if (kid) {
+    m = new THREE.Mesh(orbGeo, owner === 'enemy' ? snowMat : kind === 'bullet' ? bubbleMat : orbMat);
+    if (owner === 'enemy') m.scale.setScalar(0.8);
+  } else if (kind === 'bullet') m = new THREE.Mesh(bulletGeo, bulletMat);
   else {
     m = new THREE.Group();
     m.add(new THREE.Mesh(arrowGeo, owner === 'enemy' ? redArrowMat : arrowMat));
@@ -530,14 +562,14 @@ function attack(p) {
   p.faceT = 0.6;
   const fx = Math.sin(aim), fz = Math.cos(aim);
   if (W.melee) {
-    fxSfx('swing');
+    fxSfx(snd('swing', 'magic'));
     for (const c of targets()) {
       const dx = c.root.position.x - pos.x, dz = c.root.position.z - pos.z;
       const dist = Math.hypot(dx, dz);
       if (dist < W.range && (dx * fx + dz * fz) / dist > W.cone) hitCreature(c, p, W.dmg + p.level * 2, fx * 1.2, fz * 1.2);
     }
   } else {
-    fxSfx(W.projectile === 'arrow' ? 'bow' : 'gun');
+    fxSfx(W.projectile === 'arrow' ? snd('bow', 'magic') : snd('gun', 'bubble'));
     const spread = target ? 0 : (Math.random() - 0.5) * 0.1;
     shoot({ from: pos, heading: aim + spread, speed: W.speed, target, dmg: W.dmg + p.level, kind: W.projectile, owner: 'player', by: p });
   }
@@ -623,7 +655,7 @@ function updatePlayerLogic(p, dt) {
     if (p.special) {
       p.special.t -= dt;
       if (p.special.t <= 0) {
-        if (p.weapon === p.special.type) { p.weapon = p.baseWeapon; setWeapon(p.h, p.weapon); }
+        if (p.weapon === p.special.type) { p.weapon = p.baseWeapon; setWeapon(p.h, wModel(p.weapon)); }
         p.special = null;
       }
     }
@@ -765,7 +797,7 @@ function updateEnemyLogic(e, dt) {
       if (e.wind > 0) {
         e.wind -= dt;
         if (e.wind <= 0) {
-          fxSfx('bow');
+          fxSfx(snd('bow', 'plop'));
           shoot({ from: pos, heading: face, speed: 20, target: null, dmg: 6, kind: 'arrow', owner: 'enemy' });
         }
       } else if (e.dodge > 0) {
@@ -823,15 +855,36 @@ function updateEnemyLogic(e, dt) {
   e.moving = moving;
 }
 
+const frogs = [];
 function poseEnemy(e, dt) {
   if (e.dying) {
-    e.h.body.rotation.x = Math.max(-Math.PI / 2, e.h.body.rotation.x - dt * 5);
-    if (e.dying < 0.3) e.root.position.y -= dt * 3;
+    if (kid) {
+      // Verzaubert: dreht sich, wird klein, und ein Frosch hüpft davon
+      if (!e.frogged) {
+        e.frogged = true;
+        const g = makeFrog();
+        g.position.copy(e.root.position).setY(0);
+        const dir = Math.random() * Math.PI * 2;
+        g.rotation.y = dir;
+        scene.add(g);
+        frogs.push({ g, dir, t: 0 });
+      }
+      e.root.rotation.y += dt * 12;
+      e.root.scale.setScalar(Math.max(0.01, e.dying));
+    } else {
+      e.h.body.rotation.x = Math.max(-Math.PI / 2, e.h.body.rotation.x - dt * 5);
+      if (e.dying < 0.3) e.root.position.y -= dt * 3;
+    }
     return;
   }
   if (e.moving) e.walk += dt * 9;
   let armR = -0.3, armL = -0.6;
-  if (e.archer) {
+  if (e.archer && kid) {
+    // Schneeball werfen: Arm nach hinten holen
+    armL = undefined;
+    if (e.wind > 0) armR = -0.3 - (1 - Math.min(1, e.wind / 0.7)) * 2.6;
+    e.h.weapon.rotation.x = 0;
+  } else if (e.archer) {
     armL = undefined;
     if (e.wind > 0) { armR = -1.45; armL = -1.3; }
     e.h.weapon.rotation.x = -armR;
@@ -839,6 +892,18 @@ function poseEnemy(e, dt) {
   else if (e.strike > 0) armR = -0.4 - (e.strike / 0.15) * 2.2;
   animateHuman(e.h, e.walk, e.moving, armR, armL);
   if (e.hit > 0) { e.hit -= dt; if (e.hit <= 0) flash(e.h, 0); }
+}
+
+function updateFrogs(dt) {
+  for (const f of [...frogs]) {
+    f.t += dt;
+    const hop = Math.abs(Math.sin(f.t * 7));
+    f.g.position.x += Math.sin(f.dir) * dt * 2.5;
+    f.g.position.z += Math.cos(f.dir) * dt * 2.5;
+    f.g.position.y = hop * 0.5;
+    if (f.t > 2.5) f.g.scale.setScalar(Math.max(0.01, 1 - (f.t - 2.5) * 2));
+    if (f.t > 3) { scene.remove(f.g); frogs.splice(frogs.indexOf(f), 1); }
+  }
 }
 
 // ================= Tiere =================
@@ -849,6 +914,7 @@ function updateAnimalLogic(c, dt) {
     if (c.dying <= 0) { scene.remove(root); animals.splice(animals.indexOf(c), 1); }
     return;
   }
+  if (kid) { updatePetLogic(c, dt); return; }
   const near = nearestPlayer(root.position, 12);
   let speed = 0;
   if (near || c.fleeT > 0) {
@@ -871,6 +937,72 @@ function updateAnimalLogic(c, dt) {
   if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6)) c.heading += Math.PI / 2;
   root.rotation.y = c.heading;
   c.spd = speed;
+}
+
+// Kinderfreundlich: Tiere laufen nicht weg. Wer zu ihnen hingeht, gewinnt einen Freund,
+// der eine Weile mitläuft und frechen Schelmen hilft.
+function updatePetLogic(c, dt) {
+  const root = c.root, pos = root.position;
+  c.petCd = (c.petCd || 0) - dt;
+  c.helpCd = (c.helpCd || 0) - dt;
+  if (c.owner && (c.owner.out || (c.petT -= dt) <= 0)) {
+    fxFloat('Tschüss! 👋', '#ffffff', pos);
+    c.owner = null;
+    c.petCd = 30;
+  }
+  if (!c.owner && c.petCd <= 0) {
+    const np = nearestPlayer(pos, 2.5);
+    if (np) {
+      c.owner = np;
+      c.petT = 40;
+      np.hp = Math.min(100, np.hp + 10);
+      fxFloat(c.type === 'deer' ? 'Neuer Freund: Reh! ❤' : 'Neuer Freund: Wildschwein! ❤', '#ff8ac8', pos);
+      fxSfx('pickup');
+    }
+  }
+  let speed = 0;
+  if (c.owner) {
+    const foe = enemies.find((e) => !e.dying && e.root.position.distanceTo(pos) < 8);
+    const op = c.owner.root.position;
+    const gx = foe ? foe.root.position.x : op.x + Math.sin(c.owner.heading + 2.4) * 2.5;
+    const gz = foe ? foe.root.position.z : op.z + Math.cos(c.owner.heading + 2.4) * 2.5;
+    const dx = gx - pos.x, dz = gz - pos.z, d = Math.hypot(dx, dz);
+    if (d > (foe ? 1.2 : 1)) {
+      c.heading = Math.atan2(dx, dz);
+      speed = Math.min(8, d * 3);
+    }
+    if (foe && d < 1.6 && c.helpCd <= 0) {
+      c.helpCd = 1.5;
+      hitCreature(foe, c.owner, 5, (dx / (d || 1)) * 1.5, (dz / (d || 1)) * 1.5);
+    }
+  } else {
+    c.wanderT -= dt;
+    if (c.wanderT <= 0) {
+      c.wanderT = 2 + Math.random() * 4;
+      c.wander = Math.random() < 0.6;
+      c.heading += (Math.random() - 0.5) * 2;
+    }
+    speed = c.wander ? 1.5 : 0;
+  }
+  if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6) && !c.owner) c.heading += Math.PI / 2;
+  root.rotation.y = c.heading;
+  c.spd = speed;
+}
+
+// Kinderfreundlich: Äpfel liegen in der Nähe der Spieler herum
+let appleTimer = 3;
+function spawnApples(dt) {
+  if (!kid || (appleTimer -= dt) > 0) return;
+  appleTimer = 6;
+  if (items.filter((it) => it.type === 'apple').length >= 10) return;
+  const ps = alivePlayers();
+  if (!ps.length) return;
+  const base = ps[Math.floor(Math.random() * ps.length)].root.position;
+  for (let n = 0; n < 20; n++) {
+    const a = Math.random() * Math.PI * 2, r = 8 + Math.random() * 18;
+    const x = base.x + Math.sin(a) * r, z = base.z + Math.cos(a) * r;
+    if (!blockedSpot(x, z)) { dropItem('apple', { x, z }); return; }
+  }
 }
 
 function poseAnimal(c, dt) {
@@ -941,7 +1073,7 @@ function applySnapshot(s) {
     p.dead = dead;
     if (attackT > p.attackT) { p.attackT = attackT; p.attackDur = attackDur; }
     if (level !== p.level) { p.level = level; applyLevel(p); }
-    if (weapon !== p.weapon) { p.weapon = weapon; setWeapon(p.h, weapon); }
+    if (weapon !== p.weapon) { p.weapon = weapon; setWeapon(p.h, wModel(weapon)); }
     p.special = spType ? { type: spType, t: spT } : null;
   });
   syncMap(remote.enemies, s.e,
@@ -1024,16 +1156,36 @@ function startGame(newMode) {
     for (let i = 0; i < 12; i++) spawnAnimal();
   }
   started = true;
+  $('tAttack').textContent = kid ? '🪄' : '⚔️';
+  const goal = kid ? 'Befreie die rote Burg von den frechen Schelmen!' : 'Erobere die rote Burg!';
+  const swapKey = isTouch ? '🔄' : 'Q / Shift';
   const text = {
-    single: isTouch ? 'Erobere die rote Burg! Mit 🔄 wechselst du die Waffe.' : 'Erobere die rote Burg! Mit Q / Shift wechselst du die Waffe.',
-    local: 'Spieler 1 hat die Mistgabel, Spieler 2 den Bogen. Helft euch gegenseitig!',
+    single: `${goal} Mit ${swapKey} wechselst du ${kid ? 'den Zauber' : 'die Waffe'}.`,
+    local: `Spieler 1 hat ${kid ? 'den Zauberstab' : 'die Mistgabel'}, Spieler 2 ${kid ? 'die Zauberkugeln' : 'den Bogen'}. Helft euch gegenseitig!`,
     host: 'Dein Mitspieler ist da! Helft euch gegenseitig!',
-    client: 'Du bist Spieler 2 mit dem Bogen. Helft euch gegenseitig!',
+    client: `Du bist Spieler 2 mit ${kid ? 'den Zauberkugeln' : 'dem Bogen'}. Helft euch gegenseitig!`,
   }[mode];
   showMsg('msg', text, 4000);
 }
 
 // ================= Startmenü =================
+const KID_TEXT = {
+  on: ['Befreit die rote Burg von den frechen Schelmen!', 'Zauberstab statt Waffen, Schelme werden in Frösche verzaubert, Tiere werden eure Freunde.'],
+  off: ['Vom Bauern zum Kaiser: erobert die rote Burg!', 'Ritter mit Mistgabel, Bogen, Feuerschwert und Maschinengewehr. Eher für ältere Kinder.'],
+};
+function showKidSetting() {
+  $('kidToggle').checked = kid;
+  const [sub, hint] = KID_TEXT[kid ? 'on' : 'off'];
+  $('menuSub').textContent = sub;
+  $('kidHint').textContent = hint;
+}
+$('kidToggle').onchange = () => {
+  kid = $('kidToggle').checked;
+  try { localStorage.setItem('kic-kid', kid ? '1' : '0'); } catch { /* egal */ }
+  showKidSetting();
+};
+showKidSetting();
+
 $('btnSingle').onclick = () => { initAudio(); startGame('single'); };
 $('btnLocal').onclick = () => { initAudio(); startGame('local'); };
 $('btnNet').onclick = () => { $('menuMain').hidden = true; $('menuNet').hidden = false; };
@@ -1052,6 +1204,7 @@ $('btnHost').onclick = async () => {
       onConnection: (c) => {
         if (conn) { c.close(); return; }
         conn = c;
+        conn.send({ t: 'cfg', kid });   // der Mitspieler übernimmt die Einstellung
         startGame('host');
         conn.on('data', (d) => {
           const p2 = players[1];
@@ -1076,8 +1229,10 @@ $('btnJoin').onclick = async () => {
     await joinGame(code, {
       onOpen: (c) => {
         conn = c;
-        startGame('client');
-        conn.on('data', (d) => { if (d.t === 's') applySnapshot(d); });
+        conn.on('data', (d) => {
+          if (d.t === 'cfg') { kid = d.kid; startGame('client'); }
+          if (d.t === 's' && started) applySnapshot(d);
+        });
         conn.on('close', () => showMsg('msg', 'Die Verbindung ist weg. Über ☰ Menü neu starten.', 6000));
       },
       onError: netError,
@@ -1117,6 +1272,7 @@ function step(dt) {
       [...animals].forEach((c) => updateAnimalLogic(c, dt));
       players.forEach((p) => (p.justAttacked = false));
       updateProjectiles(dt);
+      spawnApples(dt);
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));
@@ -1131,6 +1287,7 @@ function step(dt) {
     players.forEach((p) => posePlayer(p, dt));
     players.forEach(spectate);
   }
+  updateFrogs(dt);
   updateFloaters(scene, dt);
 }
 
@@ -1167,5 +1324,5 @@ function render() {
   }
 }
 
-window.game = { get players() { return players; }, enemies, animals, items, keys, startGame };   // zum Ausprobieren in der Konsole
+window.game = { get players() { return players; }, enemies, animals, items, keys, startGame, step, render };   // zum Ausprobieren in der Konsole
 tick();
