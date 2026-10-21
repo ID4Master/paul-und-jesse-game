@@ -119,6 +119,41 @@ function makeSnowball() {
   return g;
 }
 
+// Spitzer Zauberhut mit Sternen und weißer Bart für den bösen Zauberer
+export function addWizardLook(h) {
+  const purple = std(0x4a148c), gold = glow(0xffd54f, 1);
+  const hat = mesh(new THREE.ConeGeometry(0.26, 0.75, 16), purple, 0, 2.25, -0.02);
+  hat.rotation.x = -0.12;
+  h.body.add(hat, mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.03, 20), purple, 0, 1.9, 0));
+  for (const [x, y, z] of [[0.12, 2.15, 0.17], [-0.1, 2.35, 0.12], [0.03, 2.5, 0.08]]) {
+    const st = mesh(starGeo(0.05), gold, x, y, z);
+    h.body.add(st);
+  }
+  const beard = mesh(new THREE.ConeGeometry(0.13, 0.4, 10), std(0xeeeeee), 0, 1.55, 0.12);
+  beard.rotation.x = Math.PI;
+  h.body.add(beard);
+  // langer Umhang statt Hose
+  h.body.add(mesh(new THREE.CylinderGeometry(0.24, 0.42, 1.0, 14, 1, true), std(0x5e35b1, { side: THREE.DoubleSide }), 0, 0.5, 0));
+}
+
+// Käfig, in dem der Zauberer ein Tier gefangen hält
+export function makeCage() {
+  const g = new THREE.Group();
+  const wood = std(0x6d4c2f), bar = metal(0x666666);
+  g.add(mesh(new THREE.BoxGeometry(2.2, 0.15, 2.2), wood, 0, 0.075, 0));
+  g.add(mesh(new THREE.BoxGeometry(2.3, 0.15, 2.3), wood, 0, 2.0, 0));
+  for (let i = 0; i < 4; i++) {
+    for (let k = -1; k <= 1; k += 0.4) {
+      const b = mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.9, 5), bar);
+      const side = [[k, 1.05], [k, -1.05], [1.05, k], [-1.05, k]][i];
+      b.position.set(side[0], 1.0, side[1]);
+      g.add(b);
+    }
+  }
+  g.add(mesh(new THREE.BoxGeometry(0.3, 0.35, 0.12), glow(0xb388ff, 1.5), 0, 1.0, 1.12));   // Zauberschloss
+  return g;
+}
+
 // Kleiner Frosch: so sehen verzauberte Schelme aus
 export function makeFrog() {
   const g = new THREE.Group();
@@ -308,7 +343,67 @@ export function makeAnimal(type) {
   root.add(body);
   const legs = [];
   let fur, legLen, legY;
-  if (type === 'deer') {
+  if (type === 'cow') {
+    fur = std(0xf5f5f0);
+    const spot = std(0x2a2a2a), pink = std(0xf4a6b0);
+    const torso = mesh(new THREE.CapsuleGeometry(0.42, 0.9, 6, 12), fur, 0, 1.05, 0);
+    torso.rotation.x = Math.PI / 2;
+    torso.scale.set(1, 1, 0.95);
+    body.add(torso);
+    for (const [sx, sy, sz] of [[0.36, 1.15, 0.2], [-0.38, 1.0, -0.3], [0.1, 1.42, -0.25], [-0.3, 1.25, 0.35]]) {
+      const sp = mesh(new THREE.SphereGeometry(0.2, 10, 8), spot, sx, sy, sz);
+      sp.scale.set(0.35, 1, 1.2);
+      sp.lookAt(0, 1.05, sz);
+      body.add(sp);
+    }
+    const head = mesh(new THREE.BoxGeometry(0.42, 0.42, 0.5), fur, 0, 1.3, 0.9);
+    const snout = mesh(new THREE.BoxGeometry(0.44, 0.24, 0.2), pink, 0, 1.18, 1.18);
+    body.add(head, snout, mesh(new THREE.SphereGeometry(0.16, 10, 8), pink, 0, 0.62, -0.2));
+    for (const s of [-1, 1]) {
+      body.add(mesh(new THREE.SphereGeometry(0.04, 6, 6), eyeMat, s * 0.16, 1.4, 1.14));
+      const horn = mesh(new THREE.ConeGeometry(0.04, 0.2, 6), std(0xe8dcc0), s * 0.18, 1.6, 0.85);
+      horn.rotation.z = -s * 0.5;
+      const ear = mesh(new THREE.BoxGeometry(0.2, 0.06, 0.12), fur, s * 0.3, 1.42, 0.82);
+      body.add(horn, ear);
+    }
+    legLen = 0.75; legY = 0.78;
+    for (const [lx, lz] of [[-0.24, 0.45], [0.24, 0.45], [-0.24, -0.45], [0.24, -0.45]]) {
+      const hip = new THREE.Group();
+      hip.position.set(lx, legY, lz);
+      hip.add(mesh(new THREE.CylinderGeometry(0.08, 0.07, legLen, 8), fur, 0, -legLen / 2, 0));
+      hip.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8), std(0x3b2a1e), 0, -legLen + 0.04, 0));
+      body.add(hip);
+      legs.push(hip);
+    }
+  } else if (type === 'chicken') {
+    fur = std(0xfafafa);
+    const red = std(0xe53935), yellow = std(0xffb300);
+    const torso = mesh(new THREE.SphereGeometry(0.25, 14, 10), fur, 0, 0.42, 0);
+    torso.scale.set(0.9, 0.9, 1.15);
+    const tail = mesh(new THREE.ConeGeometry(0.12, 0.25, 8), fur, 0, 0.55, -0.27);
+    tail.rotation.x = -0.9;
+    const head = mesh(new THREE.SphereGeometry(0.13, 12, 10), fur, 0, 0.72, 0.2);
+    const beak = mesh(new THREE.ConeGeometry(0.04, 0.1, 6), yellow, 0, 0.7, 0.35);
+    beak.rotation.x = Math.PI / 2;
+    body.add(torso, tail, head, beak, mesh(new THREE.BoxGeometry(0.03, 0.1, 0.14), red, 0, 0.86, 0.2),
+             mesh(new THREE.SphereGeometry(0.035, 6, 6), red, 0, 0.62, 0.3));
+    for (const s of [-1, 1]) {
+      body.add(mesh(new THREE.SphereGeometry(0.025, 6, 6), eyeMat, s * 0.09, 0.75, 0.29));
+      const wing = mesh(new THREE.SphereGeometry(0.15, 10, 8), fur, s * 0.21, 0.45, -0.02);
+      wing.scale.set(0.3, 0.7, 1);
+      body.add(wing);
+    }
+    legLen = 0.2; legY = 0.22;
+    for (const lx of [-0.08, 0.08]) {
+      const hip = new THREE.Group();
+      hip.position.set(lx, legY, 0);
+      hip.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, legLen, 5), yellow, 0, -legLen / 2, 0));
+      hip.add(mesh(new THREE.BoxGeometry(0.08, 0.02, 0.1), yellow, 0, -legLen, 0.03));
+      body.add(hip);
+      legs.push(hip);
+    }
+    legs.push(new THREE.Group(), new THREE.Group());   // Hühner haben nur zwei Beine
+  } else if (type === 'deer') {
     fur = std(0xa0703f);
     const torso = mesh(new THREE.CapsuleGeometry(0.25, 0.8, 6, 12), fur, 0, 0.98, 0);
     torso.rotation.x = Math.PI / 2;

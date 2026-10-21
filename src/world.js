@@ -6,6 +6,11 @@ export const ENEMY_CASTLE = { x: 0, z: -100 };
 
 // Wachen mit Schwert und Bogenschützen der roten Burg
 export const GUARD_SPAWNS = [[-4, -94], [4, -94], [-10, -112], [10, -112], [-10, -58], [10, -58], [-4, -70], [4, -70]];
+// Stall neben eurer Burg (Zaun nur zum Anschauen) und Käfige beim bösen Zauberer
+export const STALL = { x1: 16, x2: 32, z1: 64, z2: 80 };
+export const CAGE_SPOTS = [[-3.5, -89, 'cow'], [3.5, -89, 'chicken'], [-12, -108, 'deer'], [12, -108, 'boar'], [-7, -51, 'chicken'], [18, -56, 'cow']];
+export const WIZARD_POS = { x: 0, z: -97 };
+
 export const ARCHER_SPAWNS = [[-7, -77], [7, -77], [0, -50]];
 
 const stone = std(0xa39e93, { roughness: 0.95 });
@@ -180,6 +185,34 @@ function addVillage(scene) {
   addFence(scene, -36, -63, -31);
 }
 
+function addStall(scene) {
+  const { x1, x2, z1, z2 } = STALL;
+  const wood = std(0x8a6a44);
+  const post = new THREE.BoxGeometry(0.15, 1.1, 0.15);
+  const rail = (ax, az, bx, bz) => {
+    const len = Math.hypot(bx - ax, bz - az);
+    for (const y of [0.45, 0.85]) {
+      const r = mesh(new THREE.BoxGeometry(len, 0.08, 0.06), wood, (ax + bx) / 2, y, (az + bz) / 2);
+      r.rotation.y = -Math.atan2(bz - az, bx - ax);
+      scene.add(r);
+    }
+    for (let t = 0; t <= len; t += 2) scene.add(mesh(post, wood, ax + ((bx - ax) * t) / len, 0.55, az + ((bz - az) * t) / len));
+  };
+  rail(x1, z1, x2, z1);
+  rail(x2, z1, x2, z2);
+  rail(x1, z2, x2, z2);
+  rail(x1, z1, x1, 69);        // Tor zur Burg hin offen lassen
+  rail(x1, 75, x1, z2);
+  // Stroh auf dem Boden, Futtertrog und Scheune
+  const straw = mesh(new THREE.PlaneGeometry(x2 - x1, z2 - z1), std(0xc9b27a), (x1 + x2) / 2, 0.03, (z1 + z2) / 2);
+  straw.rotation.x = -Math.PI / 2;
+  scene.add(straw);
+  scene.add(mesh(new THREE.BoxGeometry(3, 0.5, 0.8), wood, 24, 0.25, 66));
+  addHouse(scene, 24, 84.5, 9, 5, 0xa83232);
+  addHay(scene, 30, 78);
+  addHay(scene, 18.5, 78.5);
+}
+
 function addMountains(scene) {
   for (const side of [-1, 1]) {
     for (let i = 0; i < 6; i++) {
@@ -214,6 +247,7 @@ export const freeSpot = (x, z) =>
   !(Math.abs(z) < 26 || Math.abs(x) < 6 ||                       // Berge und Weg
     (Math.abs(x) < 18 && Math.abs(z - HOME.z) < 18) ||              // eure Burg
     (Math.abs(x) < 10 && z > 55 && z < 70) ||                       // Platz vor eurer Burg
+    (x > 10 && x < 38 && z > 56 && z < 92) ||                       // Stall
     (Math.abs(x) < 42 && z < -38 && z > -125));                     // Dorf und feindliche Burg
 
 export function randomFreeSpot() {
@@ -287,6 +321,7 @@ export function buildWorld(scene) {
   scene.add(path);
 
   addHomeCastle(scene);
+  addStall(scene);
   addEnemyCastle(scene);
   addVillage(scene);
   addMountains(scene);

@@ -34,9 +34,12 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 - Startmenü: Einzelspieler, zu zweit an einer Tastatur (Splitscreen), zu zweit übers Internet (Code mit 4 Buchstaben)
 - Auf dem Handy nur Einzelspieler, mit Joystick links und Knöpfen rechts
 - Schalter „Kinderfreundlich“ im Startmenü (Standard: An, für Paul und Jesse mit 9 und 10 Jahren):
+  - Ziel: Der böse Zauberer hält 6 Tiere in Käfigen gefangen (Burghof und Dorf). Käfig 3× verzaubern = Tier frei. Alle frei = gewonnen, der Zauberer wird zum Frosch
+  - Äpfel sammeln (Rucksack bis 9), wilde Kühe, Hühner, Rehe und Wildschweine damit füttern, dann laufen sie mit
+  - Tierfreunde in den Stall neben eurer Burg bringen: Kühe geben Milch (+30), Hühner legen Eier (+15), Rehe und Wildschweine bringen Äpfel
   - Zauberstab, Zauberkugeln, Sternenstab und Seifenblasen-Kanone statt Mistgabel, Bogen, Feuerschwert und Maschinengewehr
   - Rote Schelme kämpfen mit Kissen und Schneebällen und werden in Frösche verzaubert statt besiegt
-  - Tiere werden nicht gejagt: Wer zu ihnen hingeht, gewinnt einen Freund, der 40 Sekunden mitläuft und hilft
+  - Tierfreunde laufen mit und schubsen freche Schelme weg
   - Äpfel zum Einsammeln (+20 Energie), höchster Rang heißt „Burgheld“
   - Beim Netzwerkspiel gilt die Einstellung von dem, der das Spiel erstellt
 - Mit „Kinderfreundlich: Aus“ ist es die Ritter-Version unten (eher für ältere Kinder)

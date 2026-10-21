@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot } from './util.js';
-import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot } from './world.js';
-import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog } from './characters.js';
+import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
+import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS } from './world.js';
+import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 
@@ -164,6 +164,7 @@ function resetPlayer(p) {
   p.lives = START_LIVES;
   p.out = false;
   p.special = null;
+  p.apples = 0;
   p.weapon = p.baseWeapon = p.startWeapon;
   setWeapon(p.h, wModel(p.weapon));
   applyLevel(p);
@@ -195,7 +196,8 @@ function updateHud(p) {
     + (p.special && p.weapon !== p.special.type ? ` · ${wIcon(p.special.type)} bereit` : '');
   const xp = p.level >= MAX_LEVEL ? 'Höchster Rang erreicht!'
     : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
-  const key = [hp, p.level, lives, weapon, xp].join('|');
+  const xpLine = kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · ${xp}` : xp;
+  const key = [hp, p.level, lives, weapon, xpLine].join('|');
   if (key === p.hudCache) return;
   p.hudCache = key;
   const fill = p.hud.querySelector('.fill');
@@ -205,7 +207,7 @@ function updateHud(p) {
   p.hud.querySelector('.level').textContent = `Level ${p.level + 1}: ${rankName(p.level)}`;
   p.hud.querySelector('.lives').textContent = lives;
   p.hud.querySelector('.weapon').textContent = weapon;
-  p.hud.querySelector('.xp').textContent = xp;
+  p.hud.querySelector('.xp').textContent = xpLine;
   drawBar(p.bar, hp / 100);
 }
 
@@ -289,7 +291,7 @@ function makeEnemyEntity(archer, x, z) {
 function makeAnimalEntity(type, x, z) {
   const a = makeAnimal(type);
   a.root.position.set(x, 0, z);
-  const bar = makeBar(type === 'deer' ? 2.0 : 1.4);
+  const bar = makeBar({ deer: 2.0, cow: 2.0, chicken: 1.1 }[type] || 1.4);
   bar.visible = false;
   a.root.add(bar);
   scene.add(a.root);
@@ -298,7 +300,7 @@ function makeAnimalEntity(type, x, z) {
 }
 
 // ================= Gegner und Tiere (nur der Rechner) =================
-const targets = () => (kid ? enemies : [...enemies, ...animals]).filter((c) => !c.dying);
+const targets = () => (kid ? [...enemies, ...cages] : [...enemies, ...animals]).filter((c) => !c.dying);
 
 function spawnEnemy(slot, archer) {
   const [x, z] = (archer ? ARCHER_SPAWNS : GUARD_SPAWNS)[slot];
@@ -318,13 +320,16 @@ function spawnAllEnemies() {
 
 function spawnAnimal() {
   const s = randomFreeSpot();
-  const c = makeAnimalEntity(Math.random() < 0.55 ? 'deer' : 'boar', s.x, s.z);
-  Object.assign(c, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0 });
+  const kidTypes = ['cow', 'cow', 'chicken', 'chicken', 'chicken', 'deer', 'boar'];
+  const type = kid ? kidTypes[Math.floor(Math.random() * kidTypes.length)] : Math.random() < 0.55 ? 'deer' : 'boar';
+  const c = makeAnimalEntity(type, s.x, s.z);
+  Object.assign(c, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'wild' });
   animals.push(c);
 }
 
 function hitCreature(c, p, dmg, dirX, dirZ) {
   if (c.dying) return;
+  if (c.kind === 'cage') { hitCage(c, p); return; }
   let text = (kid ? '✨' : '-') + dmg, color = kid ? '#b388ff' : '#ffffff';
   if (c.kind === 'enemy') {
     const now = performance.now();
@@ -385,7 +390,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -400,6 +405,16 @@ function makeItemEntity(type, x, z) {
     const bone = mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 6), std(0xf4f0e8), 0, 0, -0.1);
     bone.rotation.z = 1.1;
     model.add(bone, mesh(new THREE.SphereGeometry(0.22, 10, 8), std(0x9c4a1c), 0.12, 0.06, -0.1));
+  }
+  if (type === 'milk') {
+    model.add(mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.4, 14), std(0xfafafa, { roughness: 0.2 })));
+    model.add(mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.12, 12), std(0xfafafa, { roughness: 0.2 }), 0, 0.26, 0));
+    model.add(mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.06, 12), std(0x1e88e5), 0, 0.34, 0));
+  }
+  if (type === 'egg') {
+    const egg = mesh(new THREE.SphereGeometry(0.15, 14, 10), std(0xf3e0c4, { roughness: 0.5 }));
+    egg.scale.set(0.85, 1.15, 0.85);
+    model.add(egg);
   }
   if (type === 'apple') {
     model.add(mesh(new THREE.SphereGeometry(0.2, 14, 10), std(0xd32f2f, { roughness: 0.4 })));
@@ -432,7 +447,12 @@ function dropItem(type, pos) {
 function pickUp(item, p) {
   const pos = p.root.position;
   if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); fxFloat('+30 ❤', '#ff8a80', pos); }
-  if (item.type === 'apple') { p.hp = Math.min(100, p.hp + 20); fxFloat('Mmh, Apfel! +20', '#ff8a80', pos); }
+  if (item.type === 'apple') {
+    if (p.apples < 9) { p.apples++; fxFloat(`+1 🍎 (${p.apples})`, '#ff8a80', pos); }
+    else { p.hp = Math.min(100, p.hp + 20); fxFloat('Mmh, Apfel! +20', '#ff8a80', pos); }
+  }
+  if (item.type === 'milk') { p.hp = Math.min(100, p.hp + 30); fxFloat('Leckere Milch! +30', '#ffffff', pos); }
+  if (item.type === 'egg') { p.hp = Math.min(100, p.hp + 15); fxFloat('Frisches Ei! +15', '#ffe0b2', pos); }
   if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); fxFloat('Lecker! +40', '#ffcc80', pos); }
   if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); fxFloat('+1 Leben', '#ffd54f', pos); }
   if (item.type === 'gun' || item.type === 'firesword') {
@@ -471,11 +491,15 @@ const bulletMat = new THREE.MeshStandardMaterial({ color: 0xffee58, emissive: 0x
 const orbMat = new THREE.MeshStandardMaterial({ color: 0x80deea, emissive: 0x40c4ff, emissiveIntensity: 2 });
 const bubbleMat = new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent: true, opacity: 0.5, roughness: 0.1, emissive: 0x2a6f80 });
 const snowMat = std(0xffffff);
+const spellMat = new THREE.MeshStandardMaterial({ color: 0xce93d8, emissive: 0x9c27b0, emissiveIntensity: 2.5 });
 const orbGeo = new THREE.SphereGeometry(0.15, 12, 10);
 
 function makeProjectileMesh(kind, owner) {
   let m;
-  if (kid) {
+  if (kind === 'spell') {
+    m = new THREE.Mesh(orbGeo, spellMat);
+    m.scale.setScalar(1.6);
+  } else if (kid) {
     m = new THREE.Mesh(orbGeo, owner === 'enemy' ? snowMat : kind === 'bullet' ? bubbleMat : orbMat);
     if (owner === 'enemy') m.scale.setScalar(0.8);
   } else if (kind === 'bullet') m = new THREE.Mesh(bulletGeo, bulletMat);
@@ -856,19 +880,19 @@ function updateEnemyLogic(e, dt) {
 }
 
 const frogs = [];
+function spawnFrogAt(pos) {
+  const g = makeFrog();
+  g.position.set(pos.x, 0, pos.z);
+  const dir = Math.random() * Math.PI * 2;
+  g.rotation.y = dir;
+  scene.add(g);
+  frogs.push({ g, dir, t: 0 });
+}
 function poseEnemy(e, dt) {
   if (e.dying) {
     if (kid) {
       // Verzaubert: dreht sich, wird klein, und ein Frosch hüpft davon
-      if (!e.frogged) {
-        e.frogged = true;
-        const g = makeFrog();
-        g.position.copy(e.root.position).setY(0);
-        const dir = Math.random() * Math.PI * 2;
-        g.rotation.y = dir;
-        scene.add(g);
-        frogs.push({ g, dir, t: 0 });
-      }
+      if (!e.frogged) { e.frogged = true; spawnFrogAt(e.root.position); }
       e.root.rotation.y += dt * 12;
       e.root.scale.setScalar(Math.max(0.01, e.dying));
     } else {
@@ -914,7 +938,7 @@ function updateAnimalLogic(c, dt) {
     if (c.dying <= 0) { scene.remove(root); animals.splice(animals.indexOf(c), 1); }
     return;
   }
-  if (kid) { updatePetLogic(c, dt); return; }
+  if (kid) { updateKidAnimal(c, dt); return; }
   const near = nearestPlayer(root.position, 12);
   let speed = 0;
   if (near || c.fleeT > 0) {
@@ -939,54 +963,214 @@ function updateAnimalLogic(c, dt) {
   c.spd = speed;
 }
 
-// Kinderfreundlich: Tiere laufen nicht weg. Wer zu ihnen hingeht, gewinnt einen Freund,
-// der eine Weile mitläuft und frechen Schelmen hilft.
-function updatePetLogic(c, dt) {
+// Kinderfreundlich: Tiere mit Äpfeln anfüttern, dann laufen sie mit. Im Stall geben sie etwas.
+const PRODUCE = { cow: ['milk', 18, 'Muuh! 🥛'], chicken: ['egg', 12, 'Gack gack! 🥚'], deer: ['apple', 25, '🍎'], boar: ['apple', 25, '🍎'] };
+const ANIMAL_NAME = { cow: 'die Kuh', chicken: 'das Huhn', deer: 'das Reh', boar: 'das Wildschwein' };
+const inStall = (x, z, m = 0) => x > STALL.x1 + m && x < STALL.x2 - m && z > STALL.z1 + m && z < STALL.z2 - m;
+const capital = (t) => t[0].toUpperCase() + t.slice(1);
+
+function tame(c, p) {
+  c.state = 'follow';
+  c.owner = p;
+  fxFloat('Neuer Freund! ❤', '#ff8ac8', c.root.position);
+  fxSfx('pickup');
+  fxPlayerMsg(p.index, `${capital(ANIMAL_NAME[c.type])} kommt mit! Bring es in deinen Stall neben der Burg.`, 3500);
+}
+
+function updateKidAnimal(c, dt) {
   const root = c.root, pos = root.position;
-  c.petCd = (c.petCd || 0) - dt;
   c.helpCd = (c.helpCd || 0) - dt;
-  if (c.owner && (c.owner.out || (c.petT -= dt) <= 0)) {
-    fxFloat('Tschüss! 👋', '#ffffff', pos);
+  c.hintCd = (c.hintCd || 0) - dt;
+  let speed = 0;
+  if (c.state === 'captive') { c.spd = 0; return; }
+  if (c.state === 'follow' && (!c.owner || c.owner.out)) { c.state = 'wild'; c.owner = null; }
+
+  if (c.state === 'follow' && inStall(pos.x, pos.z, 0.5)) {
+    c.state = 'stall';
+    fxFloat('Im Stall! 🏠', '#a5ff8a', pos);
+    fxSfx('pickup');
+    fxPlayerMsg(c.owner.index, `${capital(ANIMAL_NAME[c.type])} ist jetzt in deinem Stall!`, 2500);
     c.owner = null;
-    c.petCd = 30;
+    c.prodT = PRODUCE[c.type][1] / 2;
   }
-  if (!c.owner && c.petCd <= 0) {
-    const np = nearestPlayer(pos, 2.5);
-    if (np) {
-      c.owner = np;
-      c.petT = 40;
-      np.hp = Math.min(100, np.hp + 10);
-      fxFloat(c.type === 'deer' ? 'Neuer Freund: Reh! ❤' : 'Neuer Freund: Wildschwein! ❤', '#ff8ac8', pos);
-      fxSfx('pickup');
+
+  if (c.state === 'wild') {
+    const np = nearestPlayer(pos, 2.2);
+    if (np && np.apples > 0) { np.apples--; tame(c, np); }
+    else if (np && c.hintCd <= 0) {
+      c.hintCd = 4;
+      fxPlayerMsg(np.index, `Füttere ${ANIMAL_NAME[c.type]} mit einem Apfel 🍎, dann kommt es mit!`, 2500);
     }
   }
-  let speed = 0;
-  if (c.owner) {
+
+  if (c.state === 'follow') {
+    // Freunde laufen hintereinander mit und schubsen freche Schelme weg
+    const o = c.owner, op = o.root.position;
+    // Zu weit weg (z. B. hinter einem Berg hängen geblieben)? Dann schnell hinterherhüpfen
+    if (pos.distanceTo(op) > 25) pos.set(op.x - Math.sin(o.heading) * 3, 0, op.z - Math.cos(o.heading) * 3);
+    const mates = animals.filter((a) => a.owner === o && a.state === 'follow');
+    const i = mates.indexOf(c);
     const foe = enemies.find((e) => !e.dying && e.root.position.distanceTo(pos) < 8);
-    const op = c.owner.root.position;
-    const gx = foe ? foe.root.position.x : op.x + Math.sin(c.owner.heading + 2.4) * 2.5;
-    const gz = foe ? foe.root.position.z : op.z + Math.cos(c.owner.heading + 2.4) * 2.5;
+    const back = o.heading + Math.PI + (i % 2 ? 0.45 : -0.45);
+    const gx = foe ? foe.root.position.x : op.x + Math.sin(back) * (2.2 + i * 1.3);
+    const gz = foe ? foe.root.position.z : op.z + Math.cos(back) * (2.2 + i * 1.3);
     const dx = gx - pos.x, dz = gz - pos.z, d = Math.hypot(dx, dz);
-    if (d > (foe ? 1.2 : 1)) {
+    if (d > (foe ? 1.2 : 0.8)) {
       c.heading = Math.atan2(dx, dz);
-      speed = Math.min(8, d * 3);
+      speed = Math.min(9, d * 3);
     }
     if (foe && d < 1.6 && c.helpCd <= 0) {
       c.helpCd = 1.5;
-      hitCreature(foe, c.owner, 5, (dx / (d || 1)) * 1.5, (dz / (d || 1)) * 1.5);
+      hitCreature(foe, o, 5, (dx / (d || 1)) * 1.5, (dz / (d || 1)) * 1.5);
     }
   } else {
+    // gemütlich herumlaufen; im Stall bleiben sie hinter dem Zaun
     c.wanderT -= dt;
     if (c.wanderT <= 0) {
       c.wanderT = 2 + Math.random() * 4;
       c.wander = Math.random() < 0.6;
       c.heading += (Math.random() - 0.5) * 2;
     }
-    speed = c.wander ? 1.5 : 0;
+    speed = c.wander ? (c.type === 'chicken' ? 1 : 1.5) : 0;
+    if (c.state === 'stall') {
+      const nx = pos.x + Math.sin(c.heading) * 1.5, nz = pos.z + Math.cos(c.heading) * 1.5;
+      if (!inStall(nx, nz, 1)) c.heading = Math.atan2((STALL.x1 + STALL.x2) / 2 - pos.x, (STALL.z1 + STALL.z2) / 2 - pos.z);
+      c.prodT -= dt;
+      if (c.prodT <= 0) {
+        const [item, every, text] = PRODUCE[c.type];
+        c.prodT = every;
+        if (items.filter((it) => it.type === item).length < 12) {
+          dropItem(item, { x: pos.x + (Math.random() - 0.5) * 2, z: pos.z + (Math.random() - 0.5) * 2 });
+          fxFloat(text, '#ffffff', pos);
+        }
+      }
+    }
   }
-  if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6) && !c.owner) c.heading += Math.PI / 2;
+  if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6) && c.state !== 'follow') c.heading += Math.PI / 2;
   root.rotation.y = c.heading;
   c.spd = speed;
+}
+
+// ================= Kinderfreundlich: Käfige, böser Zauberer, Gewinnen =================
+const cages = [];
+let freed = 0;
+let won = false;
+let wizard = null;
+
+function spawnCages() {
+  for (const [x, z, type] of CAGE_SPOTS) {
+    const root = makeCage();
+    root.position.set(x, 0, z);
+    scene.add(root);
+    const bar = makeBar(2.6);
+    drawBar(bar, 1);
+    root.add(bar);
+    const circle = { x, z, r: 1.4 };
+    circles.push(circle);
+    const a = makeAnimalEntity(type, x, z);
+    Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'captive' });
+    animals.push(a);
+    cages.push({ kind: 'cage', id: nextId++, root, bar, hp: 3, maxHp: 3, dying: 0, circle, animal: a });
+  }
+}
+
+function hitCage(c, p) {
+  c.hp--;
+  fxFloat('✨', '#b388ff', c.root.position);
+  fxSfx('magic');
+  drawBar(c.bar, c.hp / c.maxHp);
+  if (c.hp > 0) return;
+  c.dying = 1;
+  c.bar.visible = false;
+  circles.splice(circles.indexOf(c.circle), 1);
+  freed++;
+  c.animal.state = 'follow';
+  c.animal.owner = p;
+  fxFloat('Befreit! ❤', '#ff8ac8', c.root.position);
+  fxSfx('poof');
+  if (freed >= CAGE_SPOTS.length) win();
+  else fxPlayerMsg(p.index, `Tier befreit! Noch ${CAGE_SPOTS.length - freed} gefangen. Bring es in deinen Stall.`, 3500);
+}
+
+function updateCages(dt) {
+  for (const c of [...cages]) {
+    if (!c.dying) continue;
+    c.dying -= dt;
+    if (c.dying <= 0) { scene.remove(c.root); cages.splice(cages.indexOf(c), 1); }
+  }
+}
+
+function poseCage(c, dt) {
+  if (!c.dying) return;
+  c.root.rotation.y += dt * 8;
+  c.root.scale.setScalar(Math.max(0.01, c.dying));
+}
+
+function makeWizardEntity() {
+  const h = makeHuman({ shirt: 0x5e35b1, pants: 0x311b92, hair: 0xdddddd, weapons: ['orbwand'] });
+  addWizardLook(h);
+  h.root.position.set(WIZARD_POS.x, 0, WIZARD_POS.z);
+  scene.add(h.root);
+  return { h, root: h.root, wind: 0, castT: 3, laughT: 4, gone: 0, frogged: false };
+}
+
+function updateWizardLogic(dt) {
+  const w = wizard;
+  if (!w) return;
+  if (w.gone) {
+    w.gone -= dt;
+    if (w.gone <= 0) { scene.remove(w.root); wizard = null; }
+    return;
+  }
+  const t = nearestPlayer(w.root.position, 32);
+  if (!t) { w.wind = 0; return; }
+  const tp = t.root.position, pos = w.root.position;
+  const face = Math.atan2(tp.x - pos.x, tp.z - pos.z);
+  w.root.rotation.y = face;
+  if (w.wind > 0) {
+    w.wind -= dt;
+    if (w.wind <= 0) {
+      fxSfx('plop');
+      shoot({ from: pos, heading: face, speed: 13, target: null, dmg: 8, kind: 'spell', owner: 'enemy' });
+    }
+  } else if ((w.castT -= dt) <= 0) {
+    w.wind = 0.8;
+    w.castT = 3.5;
+    fxSfx('windup');
+  }
+  if ((w.laughT -= dt) <= 0) { w.laughT = 7; fxFloat('Hihihi! 🧙', '#d1a3ff', pos); }
+}
+
+function poseWizard(w, dt) {
+  if (!w) return;
+  if (w.gone) {
+    if (!w.frogged) { w.frogged = true; spawnFrogAt(w.root.position); }
+    w.root.rotation.y += dt * 12;
+    w.root.scale.setScalar(Math.max(0.01, w.gone));
+    return;
+  }
+  const armR = w.wind > 0 ? -0.3 - (1 - w.wind / 0.8) * 2.4 : -0.3;
+  animateHuman(w.h, 0, false, armR, -0.3);
+  w.h.weapon.rotation.x = -armR;
+}
+
+function win() {
+  if (won) return;
+  won = true;
+  if (wizard) wizard.gone = 1;
+  fxGlobalMsg('🎉 Gewonnen! Alle Tiere sind frei! Der Zauberer ist jetzt ein Frosch! 🎉', 8000);
+  fxSfx('levelUp');
+  for (const p of players) fxFloat('🎉 Juhu! 🎉', '#ffd54f', p.root.position);
+  later(10, resetGame);
+}
+
+function spawnKidWorld() {
+  freed = 0;
+  won = false;
+  spawnCages();
+  if (wizard) scene.remove(wizard.root);
+  wizard = makeWizardEntity();
+  for (let i = 0; i < 16; i++) spawnAnimal();
 }
 
 // Kinderfreundlich: Äpfel liegen in der Nähe der Spieler herum
@@ -1027,6 +1211,15 @@ function resetGame() {
   pending = pending.filter((t) => t.fn === spawnAnimal);
   players.forEach((p) => { resetPlayer(p); emit(['w', p.index, null]); });
   spawnAllEnemies();
+  if (kid) {
+    // Kinderfreundlich: alle Tiere wieder einsperren und neu verteilen
+    for (const c of animals) scene.remove(c.root);
+    animals.length = 0;
+    for (const c of cages) { scene.remove(c.root); if (circles.includes(c.circle)) circles.splice(circles.indexOf(c.circle), 1); }
+    cages.length = 0;
+    pending = [];
+    spawnKidWorld();
+  }
 }
 
 // ================= Netzwerk: Spielstand verschicken und anwenden =================
@@ -1037,18 +1230,21 @@ function buildSnapshot() {
     t: 's',
     p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
       p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
-      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving]),
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
     a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
     i: items.map((it) => [it.id, it.type, r2(it.g.position.x), r2(it.g.position.z)]),
     r: projectiles.map((pr) => [pr.id, pr.kind, pr.owner, r2(pr.m.position.x), r2(pr.m.position.y), r2(pr.m.position.z),
       r2(pr.vel.x), r2(pr.vel.y), r2(pr.vel.z)]),
+    c: cages.map((c) => [c.id, r2(c.root.position.x), r2(c.root.position.z), c.hp, r2(c.dying)]),
+    z: wizard ? [r2(wizard.root.rotation.y), r2(wizard.wind), r2(wizard.gone)] : null,
+    fr: freed,
     ev: netEvents.splice(0),
   };
 }
 
-const remote = { enemies: new Map(), animals: new Map(), items: new Map(), shots: new Map() };
+const remote = { enemies: new Map(), animals: new Map(), items: new Map(), shots: new Map(), cages: new Map() };
 
 function syncMap(map, rows, create, update, remove) {
   const seen = new Set();
@@ -1065,7 +1261,8 @@ function applySnapshot(s) {
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
-    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving] = row;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples] = row;
+    p.apples = apples || 0;
     p.tx = x; p.tz = z;
     p.heading = heading; p.bodyYaw = bodyYaw;
     p.hp = hp; p.lives = lives; p.kills = kills; p.out = !!out; p.moving = moving;
@@ -1092,6 +1289,26 @@ function applySnapshot(s) {
       if (hp !== c.hp) { c.hp = hp; c.bar.visible = hp > 0; drawBar(c.bar, hp / c.maxHp); }
     },
     (c) => scene.remove(c.root));
+  freed = s.fr || 0;
+  syncMap(remote.cages, s.c || [],
+    ([id, x, z]) => {
+      const root = makeCage();
+      root.position.set(x, 0, z);
+      scene.add(root);
+      const bar = makeBar(2.6);
+      drawBar(bar, 1);
+      root.add(bar);
+      return { id, root, bar, hp: 3, maxHp: 3, dying: 0 };
+    },
+    (c, [, , , hp, dying]) => {
+      if (hp !== c.hp) { c.hp = hp; drawBar(c.bar, hp / c.maxHp); }
+      c.dying = dying;
+      c.bar.visible = !dying;
+    },
+    (c) => scene.remove(c.root));
+  if (s.z && !wizard) wizard = makeWizardEntity();
+  if (!s.z && wizard) { scene.remove(wizard.root); wizard = null; }
+  if (wizard && s.z) [wizard.root.rotation.y, wizard.wind, wizard.gone] = s.z;
   syncMap(remote.items, s.i,
     ([id, type, x, z]) => Object.assign(makeItemEntity(type, x, z), { id }),
     () => {},
@@ -1153,11 +1370,12 @@ function startGame(newMode) {
   players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
   if (isSim()) {
     spawnAllEnemies();
-    for (let i = 0; i < 12; i++) spawnAnimal();
+    if (kid) spawnKidWorld();
+    else for (let i = 0; i < 12; i++) spawnAnimal();
   }
   started = true;
   $('tAttack').textContent = kid ? '🪄' : '⚔️';
-  const goal = kid ? 'Befreie die rote Burg von den frechen Schelmen!' : 'Erobere die rote Burg!';
+  const goal = kid ? 'Der böse Zauberer hat Tiere eingesperrt: befreit sie alle! Äpfel 🍎 sammeln, Tiere füttern, ab in den Stall.' : 'Erobere die rote Burg!';
   const swapKey = isTouch ? '🔄' : 'Q / Shift';
   const text = {
     single: `${goal} Mit ${swapKey} wechselst du ${kid ? 'den Zauber' : 'die Waffe'}.`,
@@ -1170,7 +1388,7 @@ function startGame(newMode) {
 
 // ================= Startmenü =================
 const KID_TEXT = {
-  on: ['Befreit die rote Burg von den frechen Schelmen!', 'Zauberstab statt Waffen, Schelme werden in Frösche verzaubert, Tiere werden eure Freunde.'],
+  on: ['Befreit die Tiere vom bösen Zauberer!', 'Zähmt Tiere mit Äpfeln und bringt sie in euren Stall: Kühe geben Milch, Hühner legen Eier. Zauberstab statt Waffen.'],
   off: ['Vom Bauern zum Kaiser: erobert die rote Burg!', 'Ritter mit Mistgabel, Bogen, Feuerschwert und Maschinengewehr. Eher für ältere Kinder.'],
 };
 function showKidSetting() {
@@ -1273,15 +1491,21 @@ function step(dt) {
       players.forEach((p) => (p.justAttacked = false));
       updateProjectiles(dt);
       spawnApples(dt);
+      updateCages(dt);
+      updateWizardLogic(dt);
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));
       animals.forEach((c) => poseAnimal(c, dt));
+      cages.forEach((c) => poseCage(c, dt));
+      poseWizard(wizard, dt);
     } else {
       if (conn?.open) sendInput();
       smoothRemote(dt);
       remote.enemies.forEach((e) => poseEnemy(e, dt));
       remote.animals.forEach((c) => poseAnimal(c, dt));
+      remote.cages.forEach((c) => poseCage(c, dt));
+      poseWizard(wizard, dt);
       remote.items.forEach((it) => { it.t += dt; it.model.rotation.y += dt * 2; it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15; });
     }
     players.forEach((p) => posePlayer(p, dt));
