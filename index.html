@@ -174,7 +174,7 @@ scene.add(player);
 
 const state = { heading: Math.PI, hp: 100, kills: 0, rank: 0, attack: 0, cooldown: 0 };
 function resetPlayer() {
-  player.position.set(HOME.x, 0, HOME.z - 6);
+  player.position.set(HOME.x, 0, HOME.z - 16);   // vor dem Burgtor
   state.heading = Math.PI;
   state.hp = 100;
 }
@@ -312,8 +312,12 @@ function tick() {
   state.hp = Math.min(100, state.hp + 2 * dt);
   updateHud();
 
-  // Kamera hinter dem Spieler
-  camPos.set(player.position.x - fx * 10, 6, player.position.z - fz * 10);
+  // Kamera hinter dem Spieler, aber nie in einer Mauer oder einem Berg
+  let camDist = 10;
+  for (let d = 1; d <= 10; d += 0.5) {
+    if (blocked(player.position.x - fx * d, player.position.z - fz * d, 0.3)) { camDist = Math.max(1.5, d - 1); break; }
+  }
+  camPos.set(player.position.x - fx * camDist, 6, player.position.z - fz * camDist);
   camLook.set(player.position.x + fx * 4, 2, player.position.z + fz * 4);
   camera.position.lerp(camPos, 0.1);
   camera.lookAt(camLook);
