@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paul und Jesse Game</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87ceeb; font-family: system-ui, sans-serif; }
+  #hud { position: fixed; top: 12px; left: 12px; color: #fff; text-shadow: 0 1px 3px #000; font-size: 18px; line-height: 1.6; pointer-events: none; }
+  #bar { width: 200px; height: 14px; background: #0006; border: 2px solid #fff; border-radius: 4px; overflow: hidden; }
+  #hp { height: 100%; width: 100%; background: #e33; }
+  #msg { position: fixed; top: 38%; width: 100%; text-align: center; color: #fff; font-size: 40px; font-weight: bold;
+         text-shadow: 0 2px 6px #000; pointer-events: none; opacity: 0; transition: opacity .4s; }
+  #help { position: fixed; bottom: 12px; left: 12px; color: #fff; text-shadow: 0 1px 3px #000; font-size: 15px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div>Rang: <b id="rank">Bauer</b></div>
+  <div>Besiegte Gegner: <b id="kills">0</b></div>
+  <div id="bar"><div id="hp"></div></div>
+</div>
+<div id="msg"></div>
+<div id="help">↑ ↓ laufen &nbsp;·&nbsp; ← → drehen &nbsp;·&nbsp; Leertaste: angreifen</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- Grundaufbau ----------
+const WORLD = 150;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 60, 220);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 500);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x446622, 0.8));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(60, 100, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, far: 300 });
+scene.add(sun);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// Zufall mit festem Startwert, damit die Welt immer gleich aussieht
+let seed = 42;
+const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+const mat = (color) => new THREE.MeshLambertMaterial({ color });
+function mesh(geo, material, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+// ---------- Hindernisse ----------
+const circles = [];
+const boxes = [];
+function blocked(x, z, r) {
+  if (Math.abs(x) > WORLD - 2 || Math.abs(z) > WORLD - 2) return true;
+  for (const c of circles) {
+    const dx = x - c.x, dz = z - c.z;
+    if (dx * dx + dz * dz < (c.r + r) ** 2) return true;
+  }
+  for (const b of boxes) {
+    if (x + r > b.x1 && x - r < b.x2 && z + r > b.z1 && z - r < b.z2) return true;
+  }
+  return false;
+}
+function move(obj, dx, dz, r) {
+  const p = obj.position;
+  if (!blocked(p.x + dx, p.z, r)) p.x += dx;
+  if (!blocked(p.x, p.z + dz, r)) p.z += dz;
+}
+
+// ---------- Boden und Weg ----------
+const ground = mesh(new THREE.PlaneGeometry(WORLD * 2, WORLD * 2), mat(0x5aa83c));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const path = mesh(new THREE.PlaneGeometry(6, 140), mat(0xc8a96a));
+path.rotation.x = -Math.PI / 2;
+path.position.y = 0.02;
+scene.add(path);
+
+// ---------- Burgen ----------
+function addWall(x1, z1, x2, z2, material) {
+  const w = Math.max(Math.abs(x2 - x1), 1), d = Math.max(Math.abs(z2 - z1), 1);
+  scene.add(mesh(new THREE.BoxGeometry(w, 5, d), material, (x1 + x2) / 2, 2.5, (z1 + z2) / 2));
+  boxes.push({ x1: (x1 + x2) / 2 - w / 2, x2: (x1 + x2) / 2 + w / 2, z1: (z1 + z2) / 2 - d / 2, z2: (z1 + z2) / 2 + d / 2 });
+}
+function addCastle(cx, cz, gateDir, color) {
+  const stone = mat(0x9e9e9e), roof = mat(color);
+  const gz = cz + gateDir * 10, bz = cz - gateDir * 10;
+  addWall(cx - 10, bz, cx + 10, bz, stone);
+  addWall(cx - 10, cz - 10, cx - 10, cz + 10, stone);
+  addWall(cx + 10, cz - 10, cx + 10, cz + 10, stone);
+  addWall(cx - 10, gz, cx - 3, gz, stone);   // Tor in der Mitte
+  addWall(cx + 3, gz, cx + 10, gz, stone);
+  for (const [tx, tz] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) {
+    scene.add(mesh(new THREE.CylinderGeometry(2, 2, 8, 12), stone, cx + tx, 4, cz + tz));
+    scene.add(mesh(new THREE.ConeGeometry(2.6, 3, 12), roof, cx + tx, 9.5, cz + tz));
+    circles.push({ x: cx + tx, z: cz + tz, r: 2 });
+  }
+  scene.add(mesh(new THREE.BoxGeometry(6, 9, 6), stone, cx, 4.5, cz));
+  const keepRoof = mesh(new THREE.ConeGeometry(5, 4, 4), roof, cx, 11, cz);
+  keepRoof.rotation.y = Math.PI / 4;
+  scene.add(keepRoof);
+  scene.add(mesh(new THREE.CylinderGeometry(0.1, 0.1, 4), mat(0x5d4037), cx, 15, cz));
+  const flag = mesh(new THREE.PlaneGeometry(2, 1.2), new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }), cx + 1, 16.3, cz);
+  scene.add(flag);
+  boxes.push({ x1: cx - 3, x2: cx + 3, z1: cz - 3, z2: cz + 3 });
+}
+const HOME = { x: 0, z: 80 };
+addCastle(HOME.x, HOME.z, -1, 0x1e63d6);   // deine Burg (blau)
+addCastle(0, -80, 1, 0xd32f2f);            // feindliche Burg (rot)
+
+// ---------- Berge mit Pass in der Mitte ----------
+const rockMat = mat(0x7a7a7a), snowMat = mat(0xffffff);
+for (let side of [-1, 1]) {
+  for (let i = 0; i < 6; i++) {
+    const r = 14 + rand() * 6, h = 25 + rand() * 20;
+    const x = side * (26 + i * 22), z = (rand() - 0.5) * 12;
+    scene.add(mesh(new THREE.ConeGeometry(r, h, 10), rockMat, x, h / 2, z));
+    scene.add(mesh(new THREE.ConeGeometry(r * 0.3, h * 0.3, 10), snowMat, x, h * 0.85 + 0.1, z));
+    circles.push({ x, z, r: r * 0.9 });
+  }
+}
+
+// ---------- Wald ----------
+const trunkGeo = new THREE.CylinderGeometry(0.4, 0.5, 2.5, 6), trunkMat = mat(0x6d4c2f);
+const leafGeo = new THREE.ConeGeometry(2.2, 5, 8), leafMat = mat(0x2e6b2a);
+for (let n = 0; n < 220; n++) {
+  const x = (rand() - 0.5) * 280, z = (rand() - 0.5) * 280;
+  if (Math.abs(z) < 26 || Math.abs(x) < 6) continue;                  // Berge und Weg frei lassen
+  if (Math.abs(x) < 18 && Math.abs(Math.abs(z) - 80) < 18) continue;  // Burgen frei lassen
+  if (Math.abs(x) < 16 && z > -70 && z < -40) continue;               // Platz vor der feindlichen Burg
+  scene.add(mesh(trunkGeo, trunkMat, x, 1.25, z));
+  scene.add(mesh(leafGeo, leafMat, x, 4.8, z));
+  circles.push({ x, z, r: 0.8 });
+}
+
+// ---------- Spielfigur ----------
+const RANKS = ['Bauer', 'Ritter', 'Schmied', 'Landherr', 'König', 'Kaiser', 'Militär'];
+const RANK_COLORS = [0x8b5a2b, 0xb0b8c0, 0x444444, 0x2e7d32, 0x6a1b9a, 0xd4af37, 0x556b2f];
+
+const player = new THREE.Group();
+const shirtMat = mat(RANK_COLORS[0]);
+const body = mesh(new THREE.CylinderGeometry(0.6, 0.7, 1.8, 10), shirtMat, 0, 0.9, 0);
+const head = mesh(new THREE.SphereGeometry(0.45, 12, 10), mat(0xf1c27d), 0, 2.2, 0);
+const hat = mesh(new THREE.ConeGeometry(0.8, 0.5, 12), mat(0xe8c547), 0, 2.65, 0);
+const fork = new THREE.Group();
+fork.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6), mat(0x8d6e63), 0, 1.3, 0));
+for (const fx of [-0.15, 0, 0.15]) fork.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5), mat(0x999999), fx, 2.8, 0));
+fork.position.set(0.8, 0.4, 0.2);
+player.add(body, head, hat, fork);
+scene.add(player);
+
+const state = { heading: Math.PI, hp: 100, kills: 0, rank: 0, attack: 0, cooldown: 0 };
+function resetPlayer() {
+  player.position.set(HOME.x, 0, HOME.z - 6);
+  state.heading = Math.PI;
+  state.hp = 100;
+}
+resetPlayer();
+
+// ---------- Gegner ----------
+const SPAWNS = [[-8, -60], [8, -60], [-4, -52], [4, -52]];
+const enemies = [];
+function spawnEnemy(i) {
+  const g = new THREE.Group();
+  const m = mat(0xc62828);
+  g.add(mesh(new THREE.CylinderGeometry(0.6, 0.7, 1.8, 10), m, 0, 0.9, 0));
+  g.add(mesh(new THREE.SphereGeometry(0.45, 12, 10), mat(0xf1c27d), 0, 2.2, 0));
+  g.add(mesh(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x777777), 0, 2.3, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.12, 1.6, 0.25), mat(0xdddddd), 0.8, 1.4, 0.4));
+  const [x, z] = SPAWNS[i];
+  g.position.set(x, 0, z);
+  scene.add(g);
+  enemies.push({ g, m, hp: 3, home: { x, z }, hit: 0, attackCd: 0, slot: i });
+}
+SPAWNS.forEach((_, i) => spawnEnemy(i));
+
+// ---------- Anzeige ----------
+const $ = (id) => document.getElementById(id);
+let msgTimer;
+function showMsg(text) {
+  $('msg').textContent = text;
+  $('msg').style.opacity = 1;
+  clearTimeout(msgTimer);
+  msgTimer = setTimeout(() => ($('msg').style.opacity = 0), 2200);
+}
+function updateHud() {
+  $('rank').textContent = RANKS[state.rank];
+  $('kills').textContent = state.kills;
+  $('hp').style.width = Math.max(0, state.hp) + '%';
+}
+showMsg('Du bist ein Bauer. Besiege die roten Wachen!');
+
+// ---------- Tastatur ----------
+const keys = {};
+addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', (e) => (keys[e.code] = false));
+
+// ---------- Spielschleife ----------
+const clock = new THREE.Clock();
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+let walkTime = 0;
+
+function attack() {
+  state.attack = 0.3;
+  state.cooldown = 0.45;
+  const fx = Math.sin(state.heading), fz = Math.cos(state.heading);
+  for (const e of [...enemies]) {
+    const dx = e.g.position.x - player.position.x, dz = e.g.position.z - player.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 3.2 && (dx * fx + dz * fz) / dist > 0.3) {
+      e.hp--;
+      e.hit = 0.15;
+      e.g.position.x += fx * 1.5;
+      e.g.position.z += fz * 1.5;
+      if (e.hp <= 0) defeat(e);
+    }
+  }
+}
+
+function defeat(e) {
+  scene.remove(e.g);
+  enemies.splice(enemies.indexOf(e), 1);
+  state.kills++;
+  const newRank = Math.min(Math.floor(state.kills / 3), RANKS.length - 1);
+  if (newRank > state.rank) {
+    state.rank = newRank;
+    shirtMat.color.setHex(RANK_COLORS[newRank]);
+    hat.visible = newRank === 0;
+    showMsg('Du bist jetzt ' + RANKS[newRank] + '!');
+  }
+  setTimeout(() => spawnEnemy(e.slot), 5000);
+  updateHud();
+}
+
+function tick() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // Spieler bewegen
+  if (keys.ArrowLeft || keys.KeyA) state.heading += 2.5 * dt;
+  if (keys.ArrowRight || keys.KeyD) state.heading -= 2.5 * dt;
+  let speed = 0;
+  if (keys.ArrowUp || keys.KeyW) speed = 12;
+  if (keys.ArrowDown || keys.KeyS) speed = -7;
+  const fx = Math.sin(state.heading), fz = Math.cos(state.heading);
+  if (speed) {
+    move(player, fx * speed * dt, fz * speed * dt, 0.8);
+    walkTime += dt * 10;
+  }
+  player.rotation.y = state.heading;
+  body.position.y = 0.9 + (speed ? Math.abs(Math.sin(walkTime)) * 0.15 : 0);
+
+  // Angriff
+  state.cooldown -= dt;
+  if (keys.Space && state.cooldown <= 0) attack();
+  state.attack = Math.max(0, state.attack - dt);
+  fork.rotation.x = state.attack > 0 ? Math.sin((state.attack / 0.3) * Math.PI) * 1.4 : 0;
+
+  // Gegner
+  for (const e of enemies) {
+    const p = e.g.position;
+    const dx = player.position.x - p.x, dz = player.position.z - p.z;
+    const dist = Math.hypot(dx, dz);
+    let tx, tz;
+    if (dist < 25) { tx = dx; tz = dz; }                                  // verfolgen
+    else { tx = e.home.x - p.x; tz = e.home.z - p.z; }                    // zurück zur Burg
+    const tl = Math.hypot(tx, tz);
+    if (tl > 1.8) {
+      move(e.g, (tx / tl) * 6 * dt, (tz / tl) * 6 * dt, 0.8);
+      e.g.rotation.y = Math.atan2(tx, tz);
+    }
+    e.attackCd -= dt;
+    if (dist < 2.4 && e.attackCd <= 0) {
+      e.attackCd = 1;
+      state.hp -= 10;
+      updateHud();
+    }
+    e.hit = Math.max(0, e.hit - dt);
+    e.m.emissive.setHex(e.hit > 0 ? 0xffffff : 0x000000);
+  }
+
+  // Lebenspunkte
+  if (state.hp <= 0) {
+    showMsg('Autsch! Zurück in deine Burg.');
+    resetPlayer();
+  }
+  state.hp = Math.min(100, state.hp + 2 * dt);
+  updateHud();
+
+  // Kamera hinter dem Spieler
+  camPos.set(player.position.x - fx * 10, 6, player.position.z - fz * 10);
+  camLook.set(player.position.x + fx * 4, 2, player.position.z + fz * 4);
+  camera.position.lerp(camPos, 0.1);
+  camera.lookAt(camLook);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+camera.position.set(player.position.x, 6, player.position.z + 10);
+tick();
+</script>
+</body>
+</html>
