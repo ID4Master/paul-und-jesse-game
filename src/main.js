@@ -3,10 +3,15 @@ import { std, metal, mesh, move, solidAt, angleDiff } from './util.js';
 import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot } from './world.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
+import { hostGame, joinGame, randomCode } from './net.js';
+
+const $ = (id) => document.getElementById(id);
+const isTouch = matchMedia('(pointer: coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
 
 // ================= Grundaufbau =================
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -23,7 +28,7 @@ scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x4a6b2a, 1.0));
 const sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
 sun.position.set(70, 110, 40);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
 sun.shadow.bias = -0.0005;
 Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -160, far: 350 });
 scene.add(sun);
@@ -45,35 +50,91 @@ const WEAPONS = {
   gun:       { name: 'Maschinengewehr', icon: '💥', melee: false, dmg: 5, cd: 0.1, speed: 60, projectile: 'bullet', special: true },
 };
 
-// ================= Pending-Aufgaben (z. B. Gegner neu erscheinen lassen) =================
+// ================= Spielmodus =================
+// single: ein Spieler · local: zwei an einer Tastatur · host/client: zwei übers Internet
+let mode = null;
+let me = 0;              // welcher Spieler auf diesem Gerät zu sehen ist (bei 'local' beide)
+let started = false;
+let conn = null;
+let players = [];
+const enemies = [];
+const animals = [];
+const items = [];
+const projectiles = [];
+let nextId = 1;
 let pending = [];
 const later = (t, fn) => pending.push({ t, fn });
+const isSim = () => mode !== 'client';   // rechnet dieses Gerät das Spiel?
+
+// ================= Effekte (laufen hier und werden beim Netzwerkspiel mitgeschickt) =================
+let netEvents = [];
+const emit = (ev) => { if (mode === 'host') netEvents.push(ev); };
+const visible = (i) => mode === 'local' || i === me;
+
+function fxFloat(text, color, pos) { floatText(scene, text, color, pos); emit(['f', text, color, pos.x, pos.z]); }
+function fxSfx(name) { sfx[name](); emit(['s', name]); }
+function fxPlayerMsg(i, text, ms) { playerMsg(i, text, ms); emit(['m', i, text, ms]); }
+function fxGlobalMsg(text, ms) { showMsg('msg', text, ms); emit(['g', text, ms]); }
+function fxHurt(p) { hurtVisual(p); emit(['h', p.index]); }
+function fxFlash(c) { c.hit = 0.15; flash(c.h, 0xffffff); emit(['c', c.id]); }
+function fxWait(i, text) { setWait(i, text); emit(['w', i, text]); }
+
+function playerMsg(i, text, ms) { if (visible(i)) showMsg('msg' + i, text, ms); }
+function setWait(i, text) {
+  if (!visible(i)) return;
+  const w = $('wait' + i);
+  w.textContent = text || '';
+  w.style.display = text ? 'flex' : 'none';
+}
+function hurtVisual(p) {
+  p.hurt = 0.25;
+  flash(p.h, 0xaa0000);
+  if (!visible(p.index)) return;
+  const hurtEl = $('hurt' + p.index);
+  hurtEl.style.opacity = 1;
+  setTimeout(() => (hurtEl.style.opacity = 0), 250);
+  const bar = p.hud.querySelector('.bar');
+  bar.classList.remove('shake');
+  void bar.offsetWidth;
+  bar.classList.add('shake');
+}
 
 // ================= Spieler =================
-const $ = (id) => document.getElementById(id);
-const players = [
-  { name: 'Spieler 1', startX: -2.5, startWeapon: 'fork',
-    keys: { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD', attack: ['Space'], swap: ['KeyQ', 'KeyE'] },
-    look: { pants: 0x5a4a32, hair: 0x3a2414, band: 0x1e63d6 } },
-  { name: 'Spieler 2', startX: 2.5, startWeapon: 'bow',
-    keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
-            attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'] },
-    look: { pants: 0x4a3a2a, hair: 0xd9b36a, band: 0xef6c00 } },
+const LOOKS = [
+  { pants: 0x5a4a32, hair: 0x3a2414, band: 0x1e63d6 },
+  { pants: 0x4a3a2a, hair: 0xd9b36a, band: 0xef6c00 },
 ];
+const KEYMAPS = {
+  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'] },
+  p2: { fwd: ['ArrowUp'], back: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
+        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'] },
+};
+KEYMAPS.all = Object.fromEntries(Object.keys(KEYMAPS.p1).map((k) => [k, [...KEYMAPS.p1[k], ...KEYMAPS.p2[k]]]));
+const KEY_HINTS = {
+  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln',
+  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln',
+  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln',
+};
 
-players.forEach((p, i) => {
-  p.index = i;
-  p.h = makeHuman({ shirt: RANK_COLORS[0], ...p.look, strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun'] });
+// source: 'local' (Tastatur/Touch an diesem Gerät) oder 'remote' (über das Netzwerk)
+function createPlayer(index, keymap, source) {
+  const p = {
+    index, name: 'Spieler ' + (index + 1), startX: index ? 2.5 : -2.5, startWeapon: index ? 'bow' : 'fork',
+    keymap: KEYMAPS[keymap], source, input: { fwd: 0, turn: 0, attack: false }, swapReq: false,
+  };
+  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun'] });
   p.root = p.h.root;
   scene.add(p.root);
   p.bar = makeBar();
   p.root.add(p.bar);
   p.cam = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
-  p.hud = $('hud' + i);
+  p.hud = $('hud' + index);
+  p.hud.querySelector('.keys').textContent = KEY_HINTS[keymap] || '';
   p.hudCache = '';
   p.walk = 0;
   resetPlayer(p);
-});
+  return p;
+}
 
 function applyLevel(p) {
   setArmorLevel(p.h, p.level);
@@ -90,7 +151,7 @@ function resetPlayer(p) {
   p.weapon = p.baseWeapon = p.startWeapon;
   setWeapon(p.h, p.weapon);
   applyLevel(p);
-  $('wait' + p.index).style.display = 'none';
+  setWait(p.index, null);
   respawn(p);
 }
 
@@ -106,6 +167,7 @@ function respawn(p) {
   p.attackDur = 0.35;
   p.cooldown = 0;
   p.hurt = 0;
+  p.moving = 0;
   p.camDist = 7;
   p.camInit = false;
 }
@@ -148,17 +210,9 @@ function hurtPlayer(p, rawDmg) {
   // Bessere Rüstung = weniger Schaden
   const dmg = Math.max(1, Math.round(rawDmg * (1 - 0.08 * p.level)));
   p.hp -= dmg;
-  p.hurt = 0.25;
-  flash(p.h, 0xaa0000);
-  floatText(scene, '-' + dmg, '#ff5252', p.root.position);
-  sfx.hurt();
-  const hurtEl = $('hurt' + p.index);
-  hurtEl.style.opacity = 1;
-  setTimeout(() => (hurtEl.style.opacity = 0), 250);
-  const bar = p.hud.querySelector('.bar');
-  bar.classList.remove('shake');
-  void bar.offsetWidth;
-  bar.classList.add('shake');
+  fxHurt(p);
+  fxFloat('-' + dmg, '#ff5252', p.root.position);
+  fxSfx('hurt');
   if (p.hp <= 0) loseLife(p);
 }
 
@@ -168,19 +222,18 @@ function loseLife(p) {
   p.dead = 3;
   p.special = null;
   if (WEAPONS[p.weapon].special) { p.weapon = p.baseWeapon; setWeapon(p.h, p.weapon); }
-  sfx.lifeLost();
+  fxSfx('lifeLost');
   if (p.lives > 0) {
-    showMsg('msg' + p.index, `Autsch! Noch ${p.lives} ${p.lives === 1 ? 'Leben' : 'Leben'}. Gleich geht es in der Burg weiter.`, 3000);
+    fxPlayerMsg(p.index, `Autsch! Noch ${p.lives} ${p.lives === 1 ? 'Leben' : 'Leben'}. Gleich geht es in der Burg weiter.`, 3000);
+    return;
+  }
+  p.out = true;
+  if (players.every((q) => q.out)) {
+    fxGlobalMsg(players.length === 1 ? 'Keine Leben mehr! Neues Spiel als Bauer …' : 'Beide sind besiegt! Neues Spiel als Bauern …', 4000);
+    later(4, resetGame);
   } else {
-    p.out = true;
-    const other = players[1 - p.index];
-    const w = $('wait' + p.index);
-    w.textContent = `Keine Leben mehr! Warte, bis ${other.name} auch fertig ist.`;
-    w.style.display = 'flex';
-    if (players.every((q) => q.out)) {
-      showMsg('msg', 'Beide sind besiegt! Neues Spiel als Bauern …', 4000);
-      later(4, resetGame);
-    }
+    const other = players.find((q) => q !== p);
+    fxWait(p.index, `Keine Leben mehr! Warte, bis ${other.name} auch fertig ist.`);
   }
 }
 
@@ -191,8 +244,8 @@ function addKill(p) {
     p.level = lvl;
     applyLevel(p);
     p.hp = 100;
-    showMsg('msg' + p.index, `${p.name} ist jetzt ${RANKS[lvl]}! Neue Rüstung!`, 3000);
-    sfx.levelUp();
+    fxPlayerMsg(p.index, `${p.name} ist jetzt ${RANKS[lvl]}! Neue Rüstung!`, 3000);
+    fxSfx('levelUp');
   }
 }
 
@@ -204,28 +257,43 @@ function swapWeapon(p) {
   setWeapon(p.h, p.weapon);
 }
 
-// ================= Gegner und Tiere =================
-const enemies = [];
-const animals = [];
-const targets = () => [...enemies, ...animals].filter((c) => !c.dying);
-
-function spawnEnemy(slot, archer) {
+// ================= Figuren-Modelle (für Rechner und Mitspieler gleich) =================
+function makeEnemyEntity(archer, x, z) {
   const h = makeHuman(archer
     ? { shirt: 0x8e2424, pants: 0x3a3a3a, hair: 0x2b1b10, hood: 0x5a1414, weapons: ['bow'] }
     : { shirt: 0xb71c1c, pants: 0x3a3a3a, hair: 0x2b1b10, helmet: true, shield: true, weapons: ['sword'] });
-  const [x, z] = (archer ? ARCHER_SPAWNS : GUARD_SPAWNS)[slot];
   h.root.position.set(x, 0, z);
   const bar = makeBar();
   h.root.add(bar);
   drawBar(bar, 1);
   scene.add(h.root);
   const maxHp = archer ? 20 : 30;
-  enemies.push({
-    kind: 'enemy', archer, h, root: h.root, bar, hp: maxHp, maxHp, home: { x, z }, slot,
-    wind: 0, strike: 0, cd: 0, shootCd: 1 + Math.random() * 2, hit: 0, dying: 0, walk: 0, lastHit: null,
+  return { kind: 'enemy', archer, h, root: h.root, bar, hp: maxHp, maxHp, wind: 0, strike: 0, hit: 0, dying: 0, walk: 0, moving: false };
+}
+
+function makeAnimalEntity(type, x, z) {
+  const a = makeAnimal(type);
+  a.root.position.set(x, 0, z);
+  const bar = makeBar(type === 'deer' ? 2.0 : 1.4);
+  bar.visible = false;
+  a.root.add(bar);
+  scene.add(a.root);
+  const maxHp = type === 'deer' ? 10 : 20;
+  return { kind: 'animal', type, h: a, root: a.root, bar, hp: maxHp, maxHp, hit: 0, dying: 0, walk: 0, spd: 0 };
+}
+
+// ================= Gegner und Tiere (nur der Rechner) =================
+const targets = () => [...enemies, ...animals].filter((c) => !c.dying);
+
+function spawnEnemy(slot, archer) {
+  const [x, z] = (archer ? ARCHER_SPAWNS : GUARD_SPAWNS)[slot];
+  const e = makeEnemyEntity(archer, x, z);
+  Object.assign(e, {
+    id: nextId++, home: { x, z }, slot, cd: 0, shootCd: 1 + Math.random() * 2, lastHit: null,
     target: null, orbit: 0, orbitDir: Math.random() < 0.5 ? -1 : 1, dodge: 0, dodgeDir: 1,
     flee: 0, fled: false, backoff: 0, isAttacker: false,
   });
+  enemies.push(e);
 }
 
 function spawnAllEnemies() {
@@ -234,17 +302,10 @@ function spawnAllEnemies() {
 }
 
 function spawnAnimal() {
-  const type = Math.random() < 0.55 ? 'deer' : 'boar';
-  const a = makeAnimal(type);
   const s = randomFreeSpot();
-  a.root.position.set(s.x, 0, s.z);
-  const bar = makeBar(type === 'deer' ? 2.0 : 1.4);
-  bar.visible = false;
-  a.root.add(bar);
-  scene.add(a.root);
-  const maxHp = type === 'deer' ? 10 : 20;
-  animals.push({ kind: 'animal', type, h: a, root: a.root, bar, hp: maxHp, maxHp, hit: 0, dying: 0, walk: 0,
-                 heading: Math.random() * 6.28, wanderT: 0, moving: false, fleeT: 0 });
+  const c = makeAnimalEntity(Math.random() < 0.55 ? 'deer' : 'boar', s.x, s.z);
+  Object.assign(c, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0 });
+  animals.push(c);
 }
 
 function hitCreature(c, p, dmg, dirX, dirZ) {
@@ -265,10 +326,9 @@ function hitCreature(c, p, dmg, dirX, dirZ) {
     c.fleeT = 5;
   }
   c.hp -= dmg;
-  c.hit = 0.15;
-  flash(c.h, 0xffffff);
-  floatText(scene, text, color, c.root.position);
-  sfx.hit();
+  fxFlash(c);
+  fxFloat(text, color, c.root.position);
+  fxSfx('hit');
   move(c.root, dirX, dirZ, 0.5);
   c.bar.visible = true;
   drawBar(c.bar, c.hp / c.maxHp);
@@ -294,7 +354,6 @@ function killCreature(c, p) {
 }
 
 // ================= Gegenstände zum Einsammeln =================
-const items = [];
 const heartGeo = (() => {
   const s = new THREE.Shape();
   s.moveTo(5, 5);
@@ -312,7 +371,7 @@ const heartGeo = (() => {
 })();
 const ITEM_GLOW = { heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, gun: 0x40c4ff, firesword: 0xff7a1a };
 
-function dropItem(type, pos) {
+function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
   const model = new THREE.Group();
   if (type === 'heart') model.add(mesh(heartGeo, new THREE.MeshStandardMaterial({ color: 0xe53935, emissive: 0x550000, roughness: 0.4 })));
@@ -333,50 +392,59 @@ function dropItem(type, pos) {
     model.add(w);
   }
   const ring = mesh(new THREE.TorusGeometry(0.6, 0.05, 8, 24).rotateX(Math.PI / 2),
-    new THREE.MeshStandardMaterial({ color: ITEM_GLOW[type], emissive: ITEM_GLOW[type], emissiveIntensity: 1.2 }), 0, -0.6, 0);
+    new THREE.MeshStandardMaterial({ color: ITEM_GLOW[type], emissive: ITEM_GLOW[type], emissiveIntensity: 1.2 }), 0, 0.05, 0);
   model.position.y = 0.9;
   g.add(model, ring);
-  ring.position.y = 0.05;
-  g.position.set(pos.x, 0, pos.z);
+  g.position.set(x, 0, z);
   scene.add(g);
-  items.push({ type, g, model, t: 0 });
+  return { type, g, model, t: 0 };
+}
+
+function dropItem(type, pos) {
+  const it = makeItemEntity(type, pos.x, pos.z);
+  it.id = nextId++;
+  items.push(it);
 }
 
 function pickUp(item, p) {
   const pos = p.root.position;
-  if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); floatText(scene, '+30 ❤', '#ff8a80', pos); }
-  if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); floatText(scene, 'Lecker! +40', '#ffcc80', pos); }
-  if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); floatText(scene, '+1 Leben', '#ffd54f', pos); }
+  if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); fxFloat('+30 ❤', '#ff8a80', pos); }
+  if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); fxFloat('Lecker! +40', '#ffcc80', pos); }
+  if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); fxFloat('+1 Leben', '#ffd54f', pos); }
   if (item.type === 'gun' || item.type === 'firesword') {
     p.special = { type: item.type, t: SPECIAL_TIME };
     p.weapon = item.type;
     setWeapon(p.h, p.weapon);
-    showMsg('msg' + p.index, `${WEAPONS[item.type].icon} ${WEAPONS[item.type].name} für ${SPECIAL_TIME} Sekunden!`);
+    fxPlayerMsg(p.index, `${WEAPONS[item.type].icon} ${WEAPONS[item.type].name} für ${SPECIAL_TIME} Sekunden!`);
   }
-  sfx.pickup();
+  fxSfx('pickup');
 }
 
 function updateItems(dt) {
   for (const it of [...items]) {
-    it.t += dt;
-    it.model.rotation.y += dt * 2;
-    it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15;
-    it.g.visible = it.t < 25 || Math.floor(it.t * 6) % 2 === 0;   // blinkt kurz vor dem Verschwinden
     const p = alivePlayers().find((q) => q.root.position.distanceTo(it.g.position) < 1.6);
     if (p) pickUp(it, p);
     if (p || it.t > 30) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
   }
 }
 
+function poseItems(dt) {
+  for (const it of items) {
+    it.t += dt;
+    it.model.rotation.y += dt * 2;
+    it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15;
+    it.g.visible = it.t < 25 || Math.floor(it.t * 6) % 2 === 0;   // blinkt kurz vor dem Verschwinden
+  }
+}
+
 // ================= Pfeile und Kugeln =================
-const projectiles = [];
 const arrowGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.8, 5).rotateX(Math.PI / 2);
 const tipGeo = new THREE.ConeGeometry(0.05, 0.15, 6).rotateX(Math.PI / 2);
 const bulletGeo = new THREE.SphereGeometry(0.07, 6, 6);
 const arrowMat = std(0x8d6e4a), tipMat = metal(0x888888), redArrowMat = std(0x7a1010);
 const bulletMat = new THREE.MeshStandardMaterial({ color: 0xffee58, emissive: 0xffd000, emissiveIntensity: 2 });
 
-function shoot({ from, heading, speed, target, dmg, kind, owner, by }) {
+function makeProjectileMesh(kind, owner) {
   let m;
   if (kind === 'bullet') m = new THREE.Mesh(bulletGeo, bulletMat);
   else {
@@ -386,9 +454,15 @@ function shoot({ from, heading, speed, target, dmg, kind, owner, by }) {
     tip.position.z = 0.45;
     m.add(tip);
   }
-  m.position.set(from.x + Math.sin(heading) * 0.8, 1.4, from.z + Math.cos(heading) * 0.8);
   scene.add(m);
-  projectiles.push({ m, vel: new THREE.Vector3(Math.sin(heading) * speed, 0, Math.cos(heading) * speed), speed, target, dmg, owner, by, life: 1.6 });
+  return m;
+}
+
+function shoot({ from, heading, speed, target, dmg, kind, owner, by }) {
+  const m = makeProjectileMesh(kind, owner);
+  m.position.set(from.x + Math.sin(heading) * 0.8, 1.4, from.z + Math.cos(heading) * 0.8);
+  projectiles.push({ id: nextId++, m, kind, vel: new THREE.Vector3(Math.sin(heading) * speed, 0, Math.cos(heading) * speed),
+                     speed, target, dmg, owner, by, life: 1.6 });
 }
 
 const tmpV = new THREE.Vector3();
@@ -456,56 +530,95 @@ function attack(p) {
   p.faceT = 0.6;
   const fx = Math.sin(aim), fz = Math.cos(aim);
   if (W.melee) {
-    sfx.swing();
+    fxSfx('swing');
     for (const c of targets()) {
       const dx = c.root.position.x - pos.x, dz = c.root.position.z - pos.z;
       const dist = Math.hypot(dx, dz);
       if (dist < W.range && (dx * fx + dz * fz) / dist > W.cone) hitCreature(c, p, W.dmg + p.level * 2, fx * 1.2, fz * 1.2);
     }
   } else {
-    W.projectile === 'arrow' ? sfx.bow() : sfx.gun();
+    fxSfx(W.projectile === 'arrow' ? 'bow' : 'gun');
     const spread = target ? 0 : (Math.random() - 0.5) * 0.1;
     shoot({ from: pos, heading: aim + spread, speed: W.speed, target, dmg: W.dmg + p.level, kind: W.projectile, owner: 'player', by: p });
   }
 }
 
-// ================= Tastatur =================
+// ================= Eingabe: Tastatur und Touch =================
 const keys = {};
+const touchIn = { fwd: 0, turn: 0, attack: false };
 addEventListener('keydown', (e) => {
   keys[e.code] = true;
   initAudio();
+  if (!started) return;
   if (e.code.startsWith('Arrow') || ['Space', 'Enter', 'ShiftRight', 'ControlRight'].includes(e.code)) e.preventDefault();
-  if (!e.repeat) for (const p of players) if (p.keys.swap.includes(e.code)) swapWeapon(p);
+  if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.swap.includes(e.code)) p.swapReq = true;
 });
 addEventListener('keyup', (e) => (keys[e.code] = false));
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ================= Spieler bewegen =================
-const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+const any = (list) => list.some((c) => keys[c]);
+function readLocalInput(p) {
+  const m = p.keymap;
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  p.input = {
+    fwd: clamp((any(m.fwd) ? 1 : 0) - (any(m.back) ? 1 : 0) + touchIn.fwd),
+    turn: clamp((any(m.left) ? 1 : 0) - (any(m.right) ? 1 : 0) + touchIn.turn),
+    attack: any(m.attack) || touchIn.attack,
+  };
+}
 
-function updatePlayer(p, dt) {
+// Joystick links, Knöpfe rechts
+{
+  const joy = $('joy'), knob = $('knob');
+  let pid = null;
+  const setKnob = (e) => {
+    const r = joy.getBoundingClientRect();
+    let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const max = r.width / 2, len = Math.hypot(dx, dy);
+    if (len > max) { dx *= max / len; dy *= max / len; }
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    const jx = dx / max, jy = dy / max;
+    touchIn.fwd = Math.abs(jy) > 0.2 ? -jy : 0;
+    touchIn.turn = Math.abs(jx) > 0.2 ? -jx : 0;
+  };
+  joy.addEventListener('pointerdown', (e) => { pid = e.pointerId; joy.setPointerCapture(pid); initAudio(); setKnob(e); });
+  joy.addEventListener('pointermove', (e) => { if (e.pointerId === pid) setKnob(e); });
+  const release = (e) => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    knob.style.transform = '';
+    touchIn.fwd = touchIn.turn = 0;
+  };
+  joy.addEventListener('pointerup', release);
+  joy.addEventListener('pointercancel', release);
+  const atk = $('tAttack');
+  atk.addEventListener('pointerdown', (e) => { atk.setPointerCapture(e.pointerId); initAudio(); touchIn.attack = true; });
+  atk.addEventListener('pointerup', () => (touchIn.attack = false));
+  atk.addEventListener('pointercancel', () => (touchIn.attack = false));
+  $('tSwap').addEventListener('pointerdown', () => { const p = players[me]; if (p) p.swapReq = true; });
+}
+
+// ================= Spieler: Logik (nur der Rechner) =================
+function updatePlayerLogic(p, dt) {
   const root = p.root;
-  let moving = false;
+  p.moving = 0;
   if (p.dead > 0) {
     p.dead -= dt;
-    p.h.body.rotation.x = Math.max(-Math.PI / 2, p.h.body.rotation.x - dt * 4);
     if (p.dead <= 0) {
-      if (p.out) { p.dead = 0.001; root.visible = false; }
+      if (p.out) p.dead = 0.001;
       else respawn(p);
     }
   } else {
-    const k = p.keys;
-    if (keys[k.left]) p.heading += 2.6 * dt;
-    if (keys[k.right]) p.heading -= 2.6 * dt;
-    let speed = 0;
-    if (keys[k.up]) speed = 9;
-    if (keys[k.down]) speed = -5;
-    if (speed) {
+    const inp = p.input;
+    p.heading += inp.turn * 2.6 * dt;
+    const speed = inp.fwd > 0 ? inp.fwd * 9 : inp.fwd * 5;
+    if (Math.abs(speed) > 0.1) {
       move(root, Math.sin(p.heading) * speed * dt, Math.cos(p.heading) * speed * dt, 0.5);
-      p.walk += dt * (speed > 0 ? 11 : -8);
-      moving = true;
+      p.moving = speed > 0 ? 1 : -1;
     }
+    if (p.swapReq) swapWeapon(p);
     p.cooldown -= dt;
-    if (k.attack.some((c) => keys[c]) && p.cooldown <= 0) attack(p);
+    if (inp.attack && p.cooldown <= 0) attack(p);
     p.hp = Math.min(100, p.hp + dt);
     if (p.special) {
       p.special.t -= dt;
@@ -515,15 +628,26 @@ function updatePlayer(p, dt) {
       }
     }
   }
-
+  p.swapReq = false;
+  p.attackT = Math.max(0, p.attackT - dt);
   // Der Körper dreht sich beim Angriff zum Ziel, die Kamera bleibt ruhig hinter dem Spieler
   p.faceT -= dt;
   const want = p.faceT > 0 ? p.face : p.heading;
   p.bodyYaw += angleDiff(want, p.bodyYaw) * Math.min(1, dt * 15);
-  root.rotation.y = p.bodyYaw;
+}
 
-  // Arme und Waffe
-  p.attackT = Math.max(0, p.attackT - dt);
+// ================= Spieler: Aussehen und Kamera (auf jedem Gerät) =================
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+
+function posePlayer(p, dt) {
+  const root = p.root;
+  if (p.dead > 0 || p.out) p.h.body.rotation.x = Math.max(-Math.PI / 2, p.h.body.rotation.x - dt * 4);
+  else p.h.body.rotation.x = 0;
+  root.visible = !(p.out && p.h.body.rotation.x <= -1.5);
+  root.rotation.y = p.bodyYaw;
+  if (p.moving) p.walk += dt * (p.moving > 0 ? 11 : -8);
+
+  p.attackT = Math.max(0, p.attackT - (isSim() ? 0 : dt));
   const prog = p.attackT > 0 ? 1 - p.attackT / p.attackDur : 0;
   const s = p.attackT > 0 ? Math.sin(prog * Math.PI) : 0;
   const wpn = p.h.weapon;
@@ -546,17 +670,11 @@ function updatePlayer(p, dt) {
     armR = p.attackT > 0 ? -2.4 + prog * 2.1 : -0.5;
     wpn.rotation.x = 0;
   }
-  animateHuman(p.h, p.walk, moving, armR, moving && armL === undefined ? undefined : armL);
+  animateHuman(p.h, p.walk, !!p.moving, armR, armL);
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist
-  if (p.out) {
-    const other = players[1 - p.index];
-    p.cam.position.copy(other.cam.position);
-    p.cam.quaternion.copy(other.cam.quaternion);
-    return;
-  }
   const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
   let wantDist = 7;
   for (let d = 1; d <= 7; d += 0.5) {
@@ -570,7 +688,16 @@ function updatePlayer(p, dt) {
   p.cam.lookAt(camLook);
 }
 
-// ================= Gegner: etwas klüger =================
+// Wer keine Leben mehr hat, schaut beim anderen zu
+function spectate(p) {
+  if (!p.out) return;
+  const other = players.find((q) => q !== p && !q.out);
+  if (!other) return;
+  p.cam.position.copy(other.cam.position);
+  p.cam.quaternion.copy(other.cam.quaternion);
+}
+
+// ================= Gegner: etwas klüger (nur der Rechner) =================
 function assignTargets() {
   for (const e of enemies) {
     if (e.dying) continue;
@@ -600,17 +727,16 @@ function walkTo(e, gx, gz, speed, dt) {
   return true;
 }
 
-function updateEnemy(e, dt) {
+function updateEnemyLogic(e, dt) {
   const root = e.root;
   if (e.dying) {
     e.dying -= dt;
-    e.h.body.rotation.x = Math.max(-Math.PI / 2, e.h.body.rotation.x - dt * 5);
-    if (e.dying < 0.3) root.position.y -= dt * 3;
     if (e.dying <= 0) { scene.remove(root); enemies.splice(enemies.indexOf(e), 1); }
     return;
   }
   e.cd -= dt;
   e.shootCd -= dt;
+  e.strike = Math.max(0, e.strike - dt);
   let moving = false;
   const t = e.target;
   const pos = root.position;
@@ -624,7 +750,7 @@ function updateEnemy(e, dt) {
   } else if (t) {
     const tp = t.root.position;
     const dx = tp.x - pos.x, dz = tp.z - pos.z;
-    const dist = Math.hypot(dx, dz);
+    const dist = Math.hypot(dx, dz) || 0.01;
     const face = Math.atan2(dx, dz);
     const sideX = -dz / dist, sideZ = dx / dist;
     root.rotation.y = face;
@@ -639,7 +765,7 @@ function updateEnemy(e, dt) {
       if (e.wind > 0) {
         e.wind -= dt;
         if (e.wind <= 0) {
-          sfx.bow();
+          fxSfx('bow');
           shoot({ from: pos, heading: face, speed: 20, target: null, dmg: 6, kind: 'arrow', owner: 'enemy' });
         }
       } else if (e.dodge > 0) {
@@ -677,7 +803,7 @@ function updateEnemy(e, dt) {
         if (e.isAttacker && dist < 2.3 && e.cd <= 0) {
           e.wind = 0.55;
           e.cd = 1.6 + Math.random() * 0.8;
-          sfx.windup();
+          fxSfx('windup');
         }
       }
     }
@@ -694,26 +820,32 @@ function updateEnemy(e, dt) {
     const d = Math.hypot(dx, dz);
     if (d > 0 && d < 1.3) move(root, (dx / d) * (1.3 - d) * 0.5, (dz / d) * (1.3 - d) * 0.5, 0.5);
   }
+  e.moving = moving;
+}
 
-  if (moving) e.walk += dt * 9;
+function poseEnemy(e, dt) {
+  if (e.dying) {
+    e.h.body.rotation.x = Math.max(-Math.PI / 2, e.h.body.rotation.x - dt * 5);
+    if (e.dying < 0.3) e.root.position.y -= dt * 3;
+    return;
+  }
+  if (e.moving) e.walk += dt * 9;
   let armR = -0.3, armL = -0.6;
   if (e.archer) {
     armL = undefined;
     if (e.wind > 0) { armR = -1.45; armL = -1.3; }
     e.h.weapon.rotation.x = -armR;
-  } else if (e.wind > 0) armR = -0.3 - (1 - e.wind / 0.55) * 2.3;
-  else if (e.strike > 0) { armR = -0.4 - (e.strike / 0.15) * 2.2; e.strike -= dt; }
-  animateHuman(e.h, e.walk, moving, armR, armL);
+  } else if (e.wind > 0) armR = -0.3 - (1 - Math.min(1, e.wind / 0.55)) * 2.3;
+  else if (e.strike > 0) armR = -0.4 - (e.strike / 0.15) * 2.2;
+  animateHuman(e.h, e.walk, e.moving, armR, armL);
   if (e.hit > 0) { e.hit -= dt; if (e.hit <= 0) flash(e.h, 0); }
 }
 
 // ================= Tiere =================
-function updateAnimal(c, dt) {
+function updateAnimalLogic(c, dt) {
   const root = c.root;
   if (c.dying) {
     c.dying -= dt;
-    c.h.body.rotation.z = Math.min(Math.PI / 2, c.h.body.rotation.z + dt * 5);
-    if (c.dying < 0.3) root.position.y -= dt * 3;
     if (c.dying <= 0) { scene.remove(root); animals.splice(animals.indexOf(c), 1); }
     return;
   }
@@ -731,15 +863,24 @@ function updateAnimal(c, dt) {
     c.wanderT -= dt;
     if (c.wanderT <= 0) {
       c.wanderT = 2 + Math.random() * 4;
-      c.moving = Math.random() < 0.6;
+      c.wander = Math.random() < 0.6;
       c.heading += (Math.random() - 0.5) * 2;
     }
-    speed = c.moving ? 1.5 : 0;
+    speed = c.wander ? 1.5 : 0;
   }
   if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6)) c.heading += Math.PI / 2;
   root.rotation.y = c.heading;
-  c.walk += dt * speed * 2.5;
-  animateAnimal(c.h, c.walk, speed > 0);
+  c.spd = speed;
+}
+
+function poseAnimal(c, dt) {
+  if (c.dying) {
+    c.h.body.rotation.z = Math.min(Math.PI / 2, c.h.body.rotation.z + dt * 5);
+    if (c.dying < 0.3) c.root.position.y -= dt * 3;
+    return;
+  }
+  c.walk += dt * c.spd * 2.5;
+  animateAnimal(c.h, c.walk, c.spd > 0);
   if (c.hit > 0) { c.hit -= dt; if (c.hit <= 0) flash(c.h, 0); }
 }
 
@@ -752,43 +893,279 @@ function resetGame() {
   for (const pr of projectiles) scene.remove(pr.m);
   projectiles.length = 0;
   pending = pending.filter((t) => t.fn === spawnAnimal);
-  players.forEach(resetPlayer);
+  players.forEach((p) => { resetPlayer(p); emit(['w', p.index, null]); });
   spawnAllEnemies();
 }
 
-spawnAllEnemies();
-for (let i = 0; i < 12; i++) spawnAnimal();
+// ================= Netzwerk: Spielstand verschicken und anwenden =================
+const r2 = (v) => Math.round(v * 100) / 100;
+
+function buildSnapshot() {
+  return {
+    t: 's',
+    p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
+      p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving]),
+    e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
+      e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
+    a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
+    i: items.map((it) => [it.id, it.type, r2(it.g.position.x), r2(it.g.position.z)]),
+    r: projectiles.map((pr) => [pr.id, pr.kind, pr.owner, r2(pr.m.position.x), r2(pr.m.position.y), r2(pr.m.position.z),
+      r2(pr.vel.x), r2(pr.vel.y), r2(pr.vel.z)]),
+    ev: netEvents.splice(0),
+  };
+}
+
+const remote = { enemies: new Map(), animals: new Map(), items: new Map(), shots: new Map() };
+
+function syncMap(map, rows, create, update, remove) {
+  const seen = new Set();
+  for (const row of rows) {
+    seen.add(row[0]);
+    let ent = map.get(row[0]);
+    if (!ent) { ent = create(row); map.set(row[0], ent); }
+    update(ent, row);
+  }
+  for (const [id, ent] of map) if (!seen.has(id)) { remove(ent); map.delete(id); }
+}
+
+function applySnapshot(s) {
+  s.p.forEach((row, i) => {
+    const p = players[i];
+    if (!p) return;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving] = row;
+    p.tx = x; p.tz = z;
+    p.heading = heading; p.bodyYaw = bodyYaw;
+    p.hp = hp; p.lives = lives; p.kills = kills; p.out = !!out; p.moving = moving;
+    if (dead > 0 && !p.dead) p.h.body.rotation.x = 0;
+    p.dead = dead;
+    if (attackT > p.attackT) { p.attackT = attackT; p.attackDur = attackDur; }
+    if (level !== p.level) { p.level = level; applyLevel(p); }
+    if (weapon !== p.weapon) { p.weapon = weapon; setWeapon(p.h, weapon); }
+    p.special = spType ? { type: spType, t: spT } : null;
+  });
+  syncMap(remote.enemies, s.e,
+    ([id, archer, x, z]) => Object.assign(makeEnemyEntity(!!archer, x, z), { id }),
+    (e, [, , x, z, ry, hp, wind, strike, dying, moving]) => {
+      e.tx = x; e.tz = z; e.root.rotation.y = ry;
+      if (hp !== e.hp) { e.hp = hp; e.bar.visible = !dying; drawBar(e.bar, hp / e.maxHp); }
+      e.wind = wind; e.strike = strike; e.dying = dying; e.moving = !!moving;
+      if (dying) e.bar.visible = false;
+    },
+    (e) => scene.remove(e.root));
+  syncMap(remote.animals, s.a,
+    ([id, type, x, z]) => Object.assign(makeAnimalEntity(type, x, z), { id }),
+    (c, [, , x, z, ry, dying, hp, spd]) => {
+      c.tx = x; c.tz = z; c.root.rotation.y = ry; c.dying = dying; c.spd = spd;
+      if (hp !== c.hp) { c.hp = hp; c.bar.visible = hp > 0; drawBar(c.bar, hp / c.maxHp); }
+    },
+    (c) => scene.remove(c.root));
+  syncMap(remote.items, s.i,
+    ([id, type, x, z]) => Object.assign(makeItemEntity(type, x, z), { id }),
+    () => {},
+    (it) => scene.remove(it.g));
+  syncMap(remote.shots, s.r,
+    ([id, kind, owner]) => ({ id, m: makeProjectileMesh(kind, owner), vel: new THREE.Vector3() }),
+    (pr, [, , , x, y, z, vx, vy, vz]) => { pr.m.position.set(x, y, z); pr.vel.set(vx, vy, vz); },
+    (pr) => scene.remove(pr.m));
+  for (const ev of s.ev) {
+    const [type, a, b, c, d] = ev;
+    if (type === 'f') floatText(scene, a, b, { x: c, z: d });
+    if (type === 's') sfx[a]();
+    if (type === 'm') playerMsg(a, b, c);
+    if (type === 'g') showMsg('msg', a, b);
+    if (type === 'h') hurtVisual(players[a]);
+    if (type === 'c') { const e = remote.enemies.get(a) || remote.animals.get(a); if (e) { e.hit = 0.15; flash(e.h, 0xffffff); } }
+    if (type === 'w') setWait(a, b);
+  }
+}
+
+// Mitspieler: Figuren sanft zur gemeldeten Position gleiten lassen
+function smoothRemote(dt) {
+  const k = Math.min(1, dt * 15);
+  const glide = (o) => {
+    if (o.tx === undefined) return;
+    if (Math.abs(o.tx - o.root.position.x) + Math.abs(o.tz - o.root.position.z) > 10) { o.root.position.x = o.tx; o.root.position.z = o.tz; return; }
+    o.root.position.x += (o.tx - o.root.position.x) * k;
+    o.root.position.z += (o.tz - o.root.position.z) * k;
+  };
+  players.forEach(glide);
+  remote.enemies.forEach(glide);
+  remote.animals.forEach(glide);
+  remote.shots.forEach((pr) => {
+    pr.m.position.addScaledVector(pr.vel, dt);
+    pr.m.lookAt(tmpV.copy(pr.m.position).add(pr.vel));
+  });
+}
+
+let lastSent = '';
+function sendInput() {
+  const p = players[me];
+  readLocalInput(p);
+  const msg = { t: 'i', f: r2(p.input.fwd), u: r2(p.input.turn), a: p.input.attack ? 1 : 0 };
+  const key = JSON.stringify(msg);
+  if (key !== lastSent) { conn.send(msg); lastSent = key; }
+  if (p.swapReq) { conn.send({ t: 'swap' }); p.swapReq = false; }
+}
+
+// ================= Spiel starten =================
+function startGame(newMode) {
+  mode = newMode;
+  me = mode === 'client' ? 1 : 0;
+  const body = document.body;
+  body.classList.add('playing', mode === 'local' ? 'split' : 'full');
+  if (mode === 'single') players = [createPlayer(0, 'all', 'local')];
+  if (mode === 'local') players = [createPlayer(0, 'p1', 'local'), createPlayer(1, 'p2', 'local')];
+  if (mode === 'host') players = [createPlayer(0, 'all', 'local'), createPlayer(1, 'all', 'remote')];
+  if (mode === 'client') players = [createPlayer(0, 'all', 'remote'), createPlayer(1, 'all', 'local')];
+  players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
+  if (isSim()) {
+    spawnAllEnemies();
+    for (let i = 0; i < 12; i++) spawnAnimal();
+  }
+  started = true;
+  const text = {
+    single: isTouch ? 'Erobere die rote Burg! Mit 🔄 wechselst du die Waffe.' : 'Erobere die rote Burg! Mit Q / Shift wechselst du die Waffe.',
+    local: 'Spieler 1 hat die Mistgabel, Spieler 2 den Bogen. Helft euch gegenseitig!',
+    host: 'Dein Mitspieler ist da! Helft euch gegenseitig!',
+    client: 'Du bist Spieler 2 mit dem Bogen. Helft euch gegenseitig!',
+  }[mode];
+  showMsg('msg', text, 4000);
+}
+
+// ================= Startmenü =================
+$('btnSingle').onclick = () => { initAudio(); startGame('single'); };
+$('btnLocal').onclick = () => { initAudio(); startGame('local'); };
+$('btnNet').onclick = () => { $('menuMain').hidden = true; $('menuNet').hidden = false; };
+$('btnBack').onclick = () => location.reload();
+$('menuBtn').onclick = () => location.reload();
+const status = (html) => ($('netStatus').innerHTML = html);
+const netError = (err) => status('😕 Das hat nicht geklappt: ' + (err?.type === 'peer-unavailable' ? 'Code nicht gefunden.' : err?.message || err));
+
+$('btnHost').onclick = async () => {
+  initAudio();
+  $('btnHost').disabled = true;
+  const code = randomCode();
+  status('Verbinde …');
+  try {
+    await hostGame(code, {
+      onConnection: (c) => {
+        if (conn) { c.close(); return; }
+        conn = c;
+        startGame('host');
+        conn.on('data', (d) => {
+          const p2 = players[1];
+          if (d.t === 'i') p2.input = { fwd: d.f, turn: d.u, attack: !!d.a };
+          if (d.t === 'swap') p2.swapReq = true;
+        });
+        conn.on('close', () => { players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
+        setInterval(() => conn.open && conn.send(buildSnapshot()), 50);
+      },
+      onError: netError,
+    });
+    status(`Sag deinem Mitspieler diesen Code:<br><b>${code}</b><br>Warte auf Mitspieler …`);
+  } catch (err) { netError(err); }
+};
+
+$('btnJoin').onclick = async () => {
+  initAudio();
+  const code = $('joinCode').value.trim().toUpperCase();
+  if (code.length !== 4) { status('Bitte den Code mit 4 Buchstaben eingeben.'); return; }
+  status('Verbinde …');
+  try {
+    await joinGame(code, {
+      onOpen: (c) => {
+        conn = c;
+        startGame('client');
+        conn.on('data', (d) => { if (d.t === 's') applySnapshot(d); });
+        conn.on('close', () => showMsg('msg', 'Die Verbindung ist weg. Über ☰ Menü neu starten.', 6000));
+      },
+      onError: netError,
+    });
+  } catch (err) { netError(err); }
+};
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
-function tick() {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  for (const t of [...pending]) {
-    t.t -= dt;
-    if (t.t <= 0) { pending.splice(pending.indexOf(t), 1); t.fn(); }
-  }
-  players.forEach((p) => updatePlayer(p, dt));
-  assignTargets();
-  [...enemies].forEach((e) => updateEnemy(e, dt));
-  [...animals].forEach((a) => updateAnimal(a, dt));
-  players.forEach((p) => (p.justAttacked = false));
-  updateProjectiles(dt);
-  updateItems(dt);
-  updateFloaters(scene, dt);
+const menuCam = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+let menuT = 0;
 
-  // Geteilter Bildschirm: links Spieler 1, rechts Spieler 2
-  const w = innerWidth, h = innerHeight, half = Math.floor(w / 2);
-  renderer.setScissorTest(true);
-  players.forEach((p, i) => {
-    renderer.setViewport(i * half, 0, half, h);
-    renderer.setScissor(i * half, 0, half, h);
-    p.cam.aspect = half / h;
-    p.cam.updateProjectionMatrix();
-    renderer.render(scene, p.cam);
-  });
+let lastFrame = performance.now();
+function tick() {
+  lastFrame = performance.now();
+  step(Math.min(clock.getDelta(), 0.05));
+  render();
   requestAnimationFrame(tick);
 }
 
-window.game = { players, enemies, animals, items, keys };   // zum Ausprobieren in der Browser-Konsole
-showMsg('msg', 'Spieler 1 hat die Mistgabel, Spieler 2 den Bogen. Helft euch gegenseitig!', 4000);
+// Wer ein Netzwerkspiel erstellt hat, rechnet weiter, auch wenn sein Fenster gerade im Hintergrund ist
+setInterval(() => {
+  if (mode === 'host' && performance.now() - lastFrame > 200) { clock.getDelta(); step(0.05); }
+}, 50);
+
+function step(dt) {
+  if (started) {
+    if (isSim()) {
+      for (const t of [...pending]) {
+        t.t -= dt;
+        if (t.t <= 0) { pending.splice(pending.indexOf(t), 1); t.fn(); }
+      }
+      players.forEach((p) => { if (p.source === 'local') readLocalInput(p); });
+      players.forEach((p) => updatePlayerLogic(p, dt));
+      assignTargets();
+      [...enemies].forEach((e) => updateEnemyLogic(e, dt));
+      [...animals].forEach((c) => updateAnimalLogic(c, dt));
+      players.forEach((p) => (p.justAttacked = false));
+      updateProjectiles(dt);
+      updateItems(dt);
+      poseItems(dt);
+      enemies.forEach((e) => poseEnemy(e, dt));
+      animals.forEach((c) => poseAnimal(c, dt));
+    } else {
+      if (conn?.open) sendInput();
+      smoothRemote(dt);
+      remote.enemies.forEach((e) => poseEnemy(e, dt));
+      remote.animals.forEach((c) => poseAnimal(c, dt));
+      remote.items.forEach((it) => { it.t += dt; it.model.rotation.y += dt * 2; it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15; });
+    }
+    players.forEach((p) => posePlayer(p, dt));
+    players.forEach(spectate);
+  }
+  updateFloaters(scene, dt);
+}
+
+function render() {
+  const w = innerWidth, h = innerHeight;
+  if (!started) {
+    // Langsamer Flug um die Welt hinter dem Menü
+    menuT += 0.0008;
+    menuCam.position.set(Math.sin(menuT) * 110, 45, -20 + Math.cos(menuT) * 110);
+    menuCam.lookAt(0, 5, -40);
+    menuCam.aspect = w / h;
+    menuCam.updateProjectionMatrix();
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    renderer.render(scene, menuCam);
+  } else if (mode === 'local') {
+    // Geteilter Bildschirm: links Spieler 1, rechts Spieler 2
+    const half = Math.floor(w / 2);
+    renderer.setScissorTest(true);
+    players.forEach((p, i) => {
+      renderer.setViewport(i * half, 0, half, h);
+      renderer.setScissor(i * half, 0, half, h);
+      p.cam.aspect = half / h;
+      p.cam.updateProjectionMatrix();
+      renderer.render(scene, p.cam);
+    });
+  } else {
+    const p = players[me];
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    p.cam.aspect = w / h;
+    p.cam.updateProjectionMatrix();
+    renderer.render(scene, p.cam);
+  }
+}
+
+window.game = { get players() { return players; }, enemies, animals, items, keys, startGame };   // zum Ausprobieren in der Konsole
 tick();

@@ -1,4 +1,4 @@
-# Spielidee: Paul und Jesse Game
+# Spielidee: Knights in Castles
 
 Ein 3D-Browserspiel über Ritter in einer eigenen Welt, in der es auch Flugzeuge und Maschinengewehre gibt.
 
@@ -30,6 +30,10 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 
 ## Aktueller Stand
 
+- Online: https://id4master.github.io/paul-und-jesse-game/
+- Startmenü: Einzelspieler, zu zweit an einer Tastatur (Splitscreen), zu zweit übers Internet (Code mit 4 Buchstaben)
+- Auf dem Handy nur Einzelspieler, mit Joystick links und Knöpfen rechts
+
 - Zwei Bauern mit geteiltem Bildschirm, jeder levelt für sich
   - Spieler 1 (links): W A S D laufen, Leertaste angreifen, Q Waffe wechseln
   - Spieler 2 (rechts): Pfeiltasten laufen, Enter angreifen, Shift rechts Waffe wechseln
@@ -47,4 +51,5 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 ## Technik
 
 - Start: `python -m http.server 8123` im Projektordner, dann http://localhost:8123 öffnen
-- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne)
+- Netzwerkspiel über WebRTC (PeerJS): wer das Spiel erstellt, rechnet alles; der Mitspieler schickt nur Tasten
+- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne, net.js Netzwerk)
