@@ -41,6 +41,17 @@
   body.full .half, body.full .pmsg { width: 100%; left: 0 !important; }
   body.full .hud { left: 12px !important; }
 
+  /* ---------- Sprachchat ---------- */
+  #voice { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+           background: #000b; color: #fff; padding: 8px 12px; border-radius: 14px; border: 3px solid transparent; font-size: 15px;
+           transition: border-color .15s; white-space: nowrap; }
+  #voice[hidden] { display: none; }
+  #voice.talking { border-color: #3ecf4a; }
+  #voice button { border: none; border-radius: 10px; padding: 8px 12px; font-size: 15px; font-weight: bold; background: #3ecf4a; color: #10301a; }
+  #voice button.off { background: #ffb74d; color: #3a2200; }
+  #voice #vHang { background: #e53935; color: #fff; }
+  #voice button[hidden] { display: none; }
+
   /* ---------- Startmenü ---------- */
   #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
           background: linear-gradient(180deg, #0008, #0004 40%, #0008); box-sizing: border-box; }
@@ -124,6 +135,14 @@
 <div id="msg"></div>
 <button id="menuBtn">☰ Menü</button>
 
+<div id="voice" hidden>
+  <span id="vStatus"></span>
+  <button id="vMute" tabindex="-1"></button>
+  <button id="vHang" tabindex="-1">📞 Auflegen</button>
+  <button id="vCall" tabindex="-1" hidden>📞 Wieder verbinden</button>
+  <audio id="vAudio" autoplay></audio>
+</div>
+
 <div id="touch">
   <div id="joy"><div id="knob"></div></div>
   <button class="tbtn" id="tAttack">⚔️</button>
@@ -151,6 +170,9 @@
       <p class="howto">oder den Code vom anderen Spieler eingeben (es gilt die Einstellung von dem, der das Spiel erstellt):</p>
       <div class="join"><input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"><button class="big" id="btnJoin">Beitreten</button></div>
       <p id="netStatus"></p>
+      <p class="howto voiceinfo">🎙️ <b>Sprachchat:</b> Beim Spiel übers Internet könnt ihr miteinander sprechen. Der Browser fragt einmal nach dem Mikrofon.
+        Eure Stimme geht direkt zum Mitspieler und wird nicht gespeichert oder aufgenommen.
+        Unten im Spiel schaltet ihr euch mit 🎤 stumm und beendet mit 📞 den Sprachchat.</p>
       <button class="small" id="btnBack">← Zurück</button>
     </div>
     <div class="howto desk">

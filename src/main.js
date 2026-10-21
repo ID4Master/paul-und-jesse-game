@@ -4,6 +4,7 @@ import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, C
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
+import { startVoice, stopVoice } from './voice.js';
 
 const $ = (id) => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -1418,18 +1419,19 @@ $('btnHost').onclick = async () => {
   const code = randomCode();
   status('Verbinde …');
   try {
-    await hostGame(code, {
+    const peer = await hostGame(code, {
       onConnection: (c) => {
         if (conn) { c.close(); return; }
         conn = c;
         conn.send({ t: 'cfg', kid });   // der Mitspieler übernimmt die Einstellung
         startGame('host');
+        startVoice(peer, conn.peer, true);
         conn.on('data', (d) => {
           const p2 = players[1];
           if (d.t === 'i') p2.input = { fwd: d.f, turn: d.u, attack: !!d.a };
           if (d.t === 'swap') p2.swapReq = true;
         });
-        conn.on('close', () => { players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
+        conn.on('close', () => { stopVoice(); players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
         setInterval(() => conn.open && conn.send(buildSnapshot()), 50);
       },
       onError: netError,
@@ -1444,14 +1446,14 @@ $('btnJoin').onclick = async () => {
   if (code.length !== 4) { status('Bitte den Code mit 4 Buchstaben eingeben.'); return; }
   status('Verbinde …');
   try {
-    await joinGame(code, {
+    const peer = await joinGame(code, {
       onOpen: (c) => {
         conn = c;
         conn.on('data', (d) => {
-          if (d.t === 'cfg') { kid = d.kid; startGame('client'); }
+          if (d.t === 'cfg') { kid = d.kid; startGame('client'); startVoice(peer, conn.peer, false); }
           if (d.t === 's' && started) applySnapshot(d);
         });
-        conn.on('close', () => showMsg('msg', 'Die Verbindung ist weg. Über ☰ Menü neu starten.', 6000));
+        conn.on('close', () => { stopVoice(); showMsg('msg', 'Die Verbindung ist weg. Über ☰ Menü neu starten.', 6000); });
       },
       onError: netError,
     });
