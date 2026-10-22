@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
+import { setGrassFocus } from './grass.js';
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS } from './world.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
@@ -1973,6 +1974,7 @@ function render() {
     menuT += 0.0008;
     menuCam.position.set(Math.sin(menuT) * 110, 45, -20 + Math.cos(menuT) * 110);
     menuCam.lookAt(0, 5, -40);
+    setGrassFocus(0, 40);
     menuCam.aspect = w / h;
     menuCam.updateProjectionMatrix();
     renderer.setScissorTest(false);
@@ -1983,6 +1985,7 @@ function render() {
     const half = Math.floor(w / 2);
     renderer.setScissorTest(true);
     players.forEach((p, i) => {
+      setGrassFocus(p.root.position.x, p.root.position.z);
       renderer.setViewport(i * half, 0, half, h);
       renderer.setScissor(i * half, 0, half, h);
       p.cam.aspect = half / h;
@@ -1991,6 +1994,8 @@ function render() {
     });
   } else {
     const p = players[me];
+    const fp = p.out ? (players.find((q) => !q.out) || p) : p;
+    setGrassFocus(fp.root.position.x, fp.root.position.z);
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, w, h);
     p.cam.aspect = w / h;

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 
 export const HOME = { x: 0, z: 80 };
@@ -338,33 +339,6 @@ function addForest(scene, low) {
   });
   finish(rockMesh);
 
-  // Grasbüschel und Blumen (keine Hindernisse, nur zum Anschauen)
-  const tuftCount = low ? 900 : 2600, flowerCount = low ? 250 : 700;
-  const tuftGeo = new THREE.ConeGeometry(0.12, 0.6, 4);
-  tuftGeo.translate(0, 0.3, 0);
-  const tufts = new THREE.InstancedMesh(tuftGeo, std(0xffffff), tuftCount);
-  const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 6, 5), std(0xffffff, { roughness: 0.6 }), flowerCount);
-  const petals = [0xffeb3b, 0xffffff, 0xe91e63, 0x9c27b0, 0xff7043, 0x42a5f5];
-  let ti = 0, fi = 0;
-  for (let n = 0; n < 20000 && (ti < tuftCount || fi < flowerCount); n++) {
-    const x = (rand() - 0.5) * 290, z = (rand() - 0.5) * 290;
-    const nearPath = Math.abs(x) < 3.2 && z > -82 && z < 70;
-    if (nearPath || blocked(x, z, 0.3) || (Math.abs(x) < 12 && Math.abs(z - HOME.z) < 11)) continue;
-    if (ti < tuftCount) {
-      q.setFromAxisAngle(up, rand() * 6.28);
-      sc.set(1, 0.6 + rand() * 0.9, 1);
-      tufts.setMatrixAt(ti, m4.compose(pos.set(x, 0, z), q, sc));
-      tufts.setColorAt(ti++, col.setHSL(0.24 + rand() * 0.08, 0.5, 0.28 + rand() * 0.12));
-    } else if (fi < flowerCount && freeSpot(x, z)) {
-      sc.setScalar(0.8 + rand() * 0.6);
-      flowers.setMatrixAt(fi, m4.compose(pos.set(x, 0.18, z), q.identity(), sc));
-      flowers.setColorAt(fi++, col.setHex(petals[Math.floor(rand() * petals.length)]));
-    }
-  }
-  tufts.count = ti;
-  flowers.count = fi;
-  tufts.receiveShadow = flowers.receiveShadow = true;
-  scene.add(tufts, flowers);
 }
 
 // Teich mit Sandufer und Schilf
@@ -445,6 +419,7 @@ function addSky(scene, sunDir) {
 
 // Wolken ziehen lassen (wird jeden Frame aufgerufen)
 export function updateWorld(dt) {
+  updateGrass(dt);
   for (const c of clouds) {
     c.position.x += dt * 2.5;
     if (c.position.x > 380) c.position.x = -380;
@@ -480,6 +455,8 @@ export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5,
   addPond(scene);
   addForest(scene, low);
   mergeStatic(scene, before);
+  makeGrassField(scene, { low });
+  makeFlowers(scene, { low, rand, isFree: (x, z) => freeSpot(x, z) && !blocked(x, z, 0.4) && !(Math.abs(x) < 3.5) });
 }
 
 // Alle festen Teile mit gleichem Material zu einem Objekt zusammenfassen:
