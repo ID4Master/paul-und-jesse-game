@@ -70,4 +70,5 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 - Start: `python -m http.server 8123` im Projektordner, dann http://localhost:8123 öffnen
 - Netzwerkspiel über WebRTC (PeerJS): wer das Spiel erstellt, rechnet alles; der Mitspieler schickt nur Tasten
 - Sprachchat beim Internetspiel: direkte WebRTC-Audioverbindung über PeerJS, startet automatisch, Stumm- und Auflegen-Knopf, nichts wird gespeichert. Mikrofon-Einstellungen wie im Sprachchat von RA-Skywalk; Twilio und LiveKit aus RA-Skywalk passen hier nicht, weil sie Server und Konten brauchen
-- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne, net.js Netzwerk, voice.js Sprachchat)
+- Grafik: selbst gemalte Texturen (textures.js, keine Bilddateien), Himmel mit Farbverlauf, Sonne und Wolken, Teich, Laubbäume, Gras und Blumen als Instanzen; feste Teile werden beim Start zusammengefasst (weniger Zeichenaufrufe), Schatten folgen den Spielern
+- Code liegt in `src/` (main.js Spiellogik, world.js Welt, characters.js Figuren, ui.js Anzeige und Töne, net.js Netzwerk, voice.js Sprachchat, textures.js Texturen)

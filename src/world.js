@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 
 export const HOME = { x: 0, z: 80 };
 export const ENEMY_CASTLE = { x: 0, z: -100 };
@@ -13,9 +15,16 @@ export const WIZARD_POS = { x: 0, z: -97 };
 
 export const ARCHER_SPAWNS = [[-7, -77], [7, -77], [0, -50]];
 
-const stone = std(0xa39e93, { roughness: 0.95 });
-const darkStone = std(0x8a857b, { roughness: 0.95 });
-const merlonGeo = new THREE.BoxGeometry(1, 0.8, 1);
+const stone = std(0xcfc8b8, { roughness: 0.95, map: brickTex });
+const darkStone = std(0xa59e90, { roughness: 0.95, map: brickTex });
+const merlonGeo = worldUVBox(new THREE.BoxGeometry(1, 0.8, 1), 1, 0.8, 1);
+const sbox = (w, h, d) => worldUVBox(new THREE.BoxGeometry(w, h, d), w, h, d);
+const scyl = (rt, rb, h, seg) => worldUVCyl(new THREE.CylinderGeometry(rt, rb, h, seg), Math.max(rt, rb), h);
+const roofMat = (color) => std(color, { roughness: 0.7, map: tileTex });
+const roofCone = (r, h, seg) => worldUVCyl(new THREE.ConeGeometry(r, h, seg), r, Math.hypot(r, h), 2.2, 1.4);
+const houseTiles = tileTex.clone();
+houseTiles.repeat.set(0.45, 0.45);
+houseTiles.needsUpdate = true;
 
 function addBox(x1, x2, z1, z2) {
   boxes.push({ x1: Math.min(x1, x2), x2: Math.max(x1, x2), z1: Math.min(z1, z2), z2: Math.max(z1, z2) });
@@ -24,7 +33,7 @@ function addBox(x1, x2, z1, z2) {
 function addWall(scene, x1, z1, x2, z2, height = 5, thick = 1, material = stone) {
   const w = Math.max(Math.abs(x2 - x1), thick), d = Math.max(Math.abs(z2 - z1), thick);
   const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
-  scene.add(mesh(new THREE.BoxGeometry(w, height, d), material, cx, height / 2, cz));
+  scene.add(mesh(sbox(w, height, d), material, cx, height / 2, cz));
   const len = Math.max(w, d);
   for (let t = -len / 2 + 0.5; t <= len / 2 - 0.5; t += 2) {
     scene.add(mesh(merlonGeo, material, w > d ? cx + t : cx, height + 0.4, w > d ? cz : cz + t));
@@ -33,9 +42,13 @@ function addWall(scene, x1, z1, x2, z2, height = 5, thick = 1, material = stone)
 }
 
 function addTower(scene, x, z, r, h, roof) {
-  scene.add(mesh(new THREE.CylinderGeometry(r, r * 1.1, h, 18), stone, x, h / 2, z));
-  scene.add(mesh(new THREE.CylinderGeometry(r * 1.15, r * 1.15, 0.6, 18), darkStone, x, h + 0.3, z));
-  scene.add(mesh(new THREE.ConeGeometry(r * 1.35, r * 1.8, 18), roof, x, h + 0.6 + r * 0.9, z));
+  scene.add(mesh(scyl(r, r * 1.1, h, 20), stone, x, h / 2, z));
+  scene.add(mesh(scyl(r * 1.15, r * 1.15, 0.6, 20), darkStone, x, h + 0.3, z));
+  for (let k = 0; k < 8; k++) {   // Zinnen auf dem Turm
+    const a = (k / 8) * Math.PI * 2;
+    scene.add(mesh(merlonGeo, darkStone, x + Math.sin(a) * r * 1.05, h + 0.95, z + Math.cos(a) * r * 1.05));
+  }
+  scene.add(mesh(roofCone(r * 1.35, r * 1.8, 20), roof, x, h + 0.6 + r * 0.9, z));
   circles.push({ x, z, r });
 }
 
@@ -46,7 +59,7 @@ function addFlag(scene, x, y, z, color, size = 1) {
 
 // Einfache Burg für euch
 function addHomeCastle(scene) {
-  const roof = std(0x1e63d6, { roughness: 0.7 });
+  const roof = roofMat(0x1e63d6);
   const { x: cx, z: cz } = HOME;
   addWall(scene, cx - 10, cz + 10, cx + 10, cz + 10);
   addWall(scene, cx - 10, cz - 10, cx - 10, cz + 10);
@@ -54,8 +67,8 @@ function addHomeCastle(scene) {
   addWall(scene, cx - 10, cz - 10, cx - 3, cz - 10);   // Tor in der Mitte
   addWall(scene, cx + 3, cz - 10, cx + 10, cz - 10);
   for (const [tx, tz] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) addTower(scene, cx + tx, cz + tz, 2, 8, roof);
-  scene.add(mesh(new THREE.BoxGeometry(6, 9, 6), stone, cx, 4.5, cz));
-  const keepRoof = mesh(new THREE.ConeGeometry(5, 4, 4), roof, cx, 11, cz);
+  scene.add(mesh(sbox(6, 9, 6), stone, cx, 4.5, cz));
+  const keepRoof = mesh(roofCone(5, 4, 4), roof, cx, 11, cz);
   keepRoof.rotation.y = Math.PI / 4;
   scene.add(keepRoof);
   addFlag(scene, cx, 13, cz, 0x1e63d6);
@@ -64,7 +77,7 @@ function addHomeCastle(scene) {
 
 // Große, detaillierte feindliche Burg
 function addEnemyCastle(scene) {
-  const roof = std(0xb71c1c, { roughness: 0.7 });
+  const roof = roofMat(0xb71c1c);
   const banner = std(0xc62828, { side: THREE.DoubleSide });
   const { x: cx, z: cz } = ENEMY_CASTLE;
   const H = 7, T = 1.5, S = 18;
@@ -82,7 +95,7 @@ function addEnemyCastle(scene) {
   // Torhaus mit Bogen und Fallgitter
   addTower(scene, cx - 4.5, front + 0.5, 2.4, 10, roof);
   addTower(scene, cx + 4.5, front + 0.5, 2.4, 10, roof);
-  scene.add(mesh(new THREE.BoxGeometry(9, 2.5, 3), stone, cx, 7.5, front));
+  scene.add(mesh(sbox(9, 2.5, 3), stone, cx, 7.5, front));
   for (let bx = -1.8; bx <= 1.8; bx += 0.6) {
     scene.add(mesh(new THREE.BoxGeometry(0.12, 2.2, 0.12), std(0x333333), cx + bx, 5.3, front + 1.2));
   }
@@ -92,11 +105,11 @@ function addEnemyCastle(scene) {
   }
   // Großer Bergfried mit vier Türmchen
   const kz = cz - 7;
-  scene.add(mesh(new THREE.BoxGeometry(12, 14, 12), stone, cx, 7, kz));
+  scene.add(mesh(sbox(12, 14, 12), stone, cx, 7, kz));
   addBox(cx - 6, cx + 6, kz - 6, kz + 6);
   for (const [tx, tz] of [[-6, -6], [6, -6], [-6, 6], [6, 6]]) {
-    scene.add(mesh(new THREE.CylinderGeometry(1.4, 1.4, 17, 14), stone, cx + tx, 8.5, kz + tz));
-    scene.add(mesh(new THREE.ConeGeometry(1.9, 3, 14), roof, cx + tx, 18.5, kz + tz));
+    scene.add(mesh(scyl(1.4, 1.4, 17, 16), stone, cx + tx, 8.5, kz + tz));
+    scene.add(mesh(roofCone(1.9, 3, 16), roof, cx + tx, 18.5, kz + tz));
   }
   for (let t = -5.5; t <= 5.5; t += 2) {
     for (const [mx, mz] of [[t, -6], [t, 6], [-6, t], [6, t]]) scene.add(mesh(merlonGeo, stone, cx + mx, 14.4, kz + mz));
@@ -135,7 +148,7 @@ function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
   shape.lineTo(-w / 2 - 0.4, 0);
   const roofGeo = new THREE.ExtrudeGeometry(shape, { depth: d + 0.8, bevelEnabled: false });
   roofGeo.translate(0, 0, -(d + 0.8) / 2);
-  scene.add(mesh(roofGeo, std(roofColor, { roughness: 0.8 }), x, h, z));
+  scene.add(mesh(roofGeo, std(roofColor, { roughness: 0.8, map: houseTiles }), x, h, z));
   // Tür, Fenster, Schornstein
   scene.add(mesh(new THREE.BoxGeometry(1, 1.9, 0.08), std(0x5d3a1a), x, 0.95, z + d / 2 + 0.03));
   for (const wx of [-w / 3, w / 3]) {
@@ -249,7 +262,8 @@ export const freeSpot = (x, z) =>
     (Math.abs(x) < 10 && z > 55 && z < 70) ||                       // Platz vor eurer Burg
     (x > 10 && x < 38 && z > 56 && z < 92) ||                       // Stall
     (x > -28 && x < -6 && z > 44 && z < 72) ||                      // Werkstatt
-    (Math.abs(x) < 42 && z < -38 && z > -125));                     // Dorf und feindliche Burg
+    (Math.abs(x) < 42 && z < -38 && z > -125) ||                    // Dorf und feindliche Burg
+    Math.hypot(x - 52, z - 38) < 13);                               // Teich
 
 export function randomFreeSpot() {
   for (let n = 0; n < 100; n++) {
@@ -259,23 +273,26 @@ export function randomFreeSpot() {
   return { x: 40, z: 50 };
 }
 
-function addForest(scene) {
+function addForest(scene, low) {
   const trees = [];
   for (let n = 0; n < 500 && trees.length < 260; n++) {
     const x = (rand() - 0.5) * 280, z = (rand() - 0.5) * 280;
     if (!freeSpot(x, z)) continue;
     const s = 0.8 + rand() * 0.6;
-    trees.push({ x, z, s });
+    trees.push({ x, z, s, leafy: rand() < 0.35 });
     circles.push({ x, z, r: 0.5 * s });
   }
-  const N = trees.length;
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.35, 2.4, 7), std(0x5b3d26), N);
-  const leafGeos = [new THREE.ConeGeometry(2.2, 3, 9), new THREE.ConeGeometry(1.7, 2.6, 9), new THREE.ConeGeometry(1.1, 2.2, 9)];
-  const leafY = [3.0, 4.4, 5.6];
-  const leaves = leafGeos.map((g) => new THREE.InstancedMesh(g, std(0xffffff, { flatShading: true }), N));
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
-  trees.forEach((t, i) => {
+  const finish = (im) => { im.castShadow = true; im.receiveShadow = true; scene.add(im); };
+
+  // Tannen
+  const pines = trees.filter((t) => !t.leafy);
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.35, 2.4, 7), std(0x5b3d26), pines.length);
+  const leafGeos = [new THREE.ConeGeometry(2.2, 3, 9), new THREE.ConeGeometry(1.7, 2.6, 9), new THREE.ConeGeometry(1.1, 2.2, 9)];
+  const leafY = [3.0, 4.4, 5.6];
+  const leaves = leafGeos.map((g) => new THREE.InstancedMesh(g, std(0xffffff, { flatShading: true }), pines.length));
+  pines.forEach((t, i) => {
     q.setFromAxisAngle(up, rand() * 6.28);
     sc.setScalar(t.s);
     trunks.setMatrixAt(i, m4.compose(pos.set(t.x, 1.2 * t.s, t.z), q, sc));
@@ -285,7 +302,27 @@ function addForest(scene) {
       li.setColorAt(i, col);
     });
   });
-  for (const im of [trunks, ...leaves]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
+  [trunks, ...leaves].forEach(finish);
+
+  // Laubbäume mit runden Kronen in verschiedenen Grüntönen
+  const oaks = trees.filter((t) => t.leafy);
+  const oakTrunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.42, 3, 8), std(0x6b4a30), oaks.length);
+  const crownGeo = new THREE.IcosahedronGeometry(2.1, 1);
+  const crowns = [0, 1, 2].map(() => new THREE.InstancedMesh(crownGeo, std(0xffffff, { flatShading: true }), oaks.length));
+  const offs = [[0, 4.4, 0, 1], [0.9, 3.8, 0.6, 0.7], [-0.8, 3.9, -0.5, 0.75]];
+  oaks.forEach((t, i) => {
+    q.setFromAxisAngle(up, rand() * 6.28);
+    sc.setScalar(t.s);
+    oakTrunks.setMatrixAt(i, m4.compose(pos.set(t.x, 1.5 * t.s, t.z), q, sc));
+    col.setHSL(0.2 + rand() * 0.08, 0.45 + rand() * 0.2, 0.25 + rand() * 0.1);
+    crowns.forEach((cm, j) => {
+      const [ox, oy, oz, k] = offs[j];
+      sc.setScalar(t.s * k);
+      cm.setMatrixAt(i, m4.compose(pos.set(t.x + ox * t.s, oy * t.s, t.z + oz * t.s), q, sc));
+      cm.setColorAt(i, col);
+    });
+  });
+  [oakTrunks, ...crowns].forEach(finish);
 
   const rocks = [];
   for (let n = 0; n < 200 && rocks.length < 70; n++) {
@@ -299,12 +336,124 @@ function addForest(scene) {
     rockMesh.setMatrixAt(i, m4.compose(pos.set(r.x, r.s * 0.2, r.z), q, sc));
     if (r.s > 0.6) circles.push({ x: r.x, z: r.z, r: r.s * 0.9 });
   });
-  rockMesh.castShadow = true;
-  rockMesh.receiveShadow = true;
-  scene.add(rockMesh);
+  finish(rockMesh);
+
+  // Grasbüschel und Blumen (keine Hindernisse, nur zum Anschauen)
+  const tuftCount = low ? 900 : 2600, flowerCount = low ? 250 : 700;
+  const tuftGeo = new THREE.ConeGeometry(0.12, 0.6, 4);
+  tuftGeo.translate(0, 0.3, 0);
+  const tufts = new THREE.InstancedMesh(tuftGeo, std(0xffffff), tuftCount);
+  const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 6, 5), std(0xffffff, { roughness: 0.6 }), flowerCount);
+  const petals = [0xffeb3b, 0xffffff, 0xe91e63, 0x9c27b0, 0xff7043, 0x42a5f5];
+  let ti = 0, fi = 0;
+  for (let n = 0; n < 20000 && (ti < tuftCount || fi < flowerCount); n++) {
+    const x = (rand() - 0.5) * 290, z = (rand() - 0.5) * 290;
+    const nearPath = Math.abs(x) < 3.2 && z > -82 && z < 70;
+    if (nearPath || blocked(x, z, 0.3) || (Math.abs(x) < 12 && Math.abs(z - HOME.z) < 11)) continue;
+    if (ti < tuftCount) {
+      q.setFromAxisAngle(up, rand() * 6.28);
+      sc.set(1, 0.6 + rand() * 0.9, 1);
+      tufts.setMatrixAt(ti, m4.compose(pos.set(x, 0, z), q, sc));
+      tufts.setColorAt(ti++, col.setHSL(0.24 + rand() * 0.08, 0.5, 0.28 + rand() * 0.12));
+    } else if (fi < flowerCount && freeSpot(x, z)) {
+      sc.setScalar(0.8 + rand() * 0.6);
+      flowers.setMatrixAt(fi, m4.compose(pos.set(x, 0.18, z), q.identity(), sc));
+      flowers.setColorAt(fi++, col.setHex(petals[Math.floor(rand() * petals.length)]));
+    }
+  }
+  tufts.count = ti;
+  flowers.count = fi;
+  tufts.receiveShadow = flowers.receiveShadow = true;
+  scene.add(tufts, flowers);
 }
 
-export function buildWorld(scene) {
+// Teich mit Sandufer und Schilf
+export const POND = { x: 52, z: 38, r: 9 };
+function addPond(scene) {
+  const { x, z, r } = POND;
+  const sand = mesh(new THREE.CircleGeometry(r + 1.6, 40), std(0xd9c49a), x, 0.025, z);
+  sand.rotation.x = -Math.PI / 2;
+  const water = mesh(new THREE.CircleGeometry(r, 40),
+    new THREE.MeshStandardMaterial({ color: 0x3a8fd0, roughness: 0.08, metalness: 0.35, transparent: true, opacity: 0.88 }), x, 0.05, z);
+  water.rotation.x = -Math.PI / 2;
+  water.castShadow = false;
+  scene.add(sand, water);
+  for (let k = 0; k < 9; k++) {   // Seerosen
+    const a = rand() * Math.PI * 2, d = rand() * (r - 2);
+    const pad = mesh(new THREE.CircleGeometry(0.45, 10), std(0x4caf50), x + Math.sin(a) * d, 0.07, z + Math.cos(a) * d);
+    pad.rotation.x = -Math.PI / 2;
+    scene.add(pad);
+    if (k % 3 === 0) scene.add(mesh(new THREE.SphereGeometry(0.12, 6, 5), std(0xf8bbd0), pad.position.x, 0.14, pad.position.z));
+  }
+  const reed = std(0x6d8b3a);
+  for (let k = 0; k < 40; k++) {
+    const a = rand() * Math.PI * 2, d = r - 0.3 + rand() * 1.4;
+    const h = 0.8 + rand() * 0.9;
+    scene.add(mesh(new THREE.CylinderGeometry(0.03, 0.04, h, 4), reed, x + Math.sin(a) * d, h / 2, z + Math.cos(a) * d));
+  }
+  circles.push({ x, z, r: r - 0.5 });
+}
+
+// Himmel mit Farbverlauf, Sonne und langsam ziehenden Wolken
+const clouds = [];
+function addSky(scene, sunDir) {
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(700, 32, 16),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: { top: { value: new THREE.Color(0x3d8be0) }, bottom: { value: new THREE.Color(0xcfe9f7) } },
+      vertexShader: 'varying vec3 vPos; void main(){ vPos = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 vPos; void main(){ float h = clamp(vPos.y * 1.6, 0.0, 1.0); gl_FragColor = vec4(mix(bottom, top, pow(h, 0.7)), 1.0); }',
+    }),
+  );
+  sky.renderOrder = -10;
+  scene.add(sky);
+
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const ctx = cv.getContext('2d');
+  const grd = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(255,255,240,1)');
+  grd.addColorStop(0.25, 'rgba(255,245,200,0.9)');
+  grd.addColorStop(1, 'rgba(255,230,160,0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, 128, 128);
+  const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), fog: false, depthWrite: false }));
+  sun.position.copy(sunDir).multiplyScalar(600);
+  sun.scale.setScalar(110);
+  scene.add(sun);
+
+  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xdde8f0, emissiveIntensity: 0.35, flatShading: true, fog: false });
+  const puff = new THREE.IcosahedronGeometry(1, 1);
+  for (let k = 0; k < 16; k++) {
+    const g = new THREE.Group();
+    const n = 4 + Math.floor(rand() * 4);
+    for (let j = 0; j < n; j++) {
+      const m = new THREE.Mesh(puff, white);
+      const s = 6 + rand() * 7;
+      m.scale.set(s * 1.4, s * 0.7, s);
+      m.position.set((j - n / 2) * 8 + rand() * 4, rand() * 3, (rand() - 0.5) * 8);
+      g.add(m);
+    }
+    g.position.set((rand() - 0.5) * 700, 90 + rand() * 50, (rand() - 0.5) * 700);
+    scene.add(g);
+    clouds.push(g);
+  }
+}
+
+// Wolken ziehen lassen (wird jeden Frame aufgerufen)
+export function updateWorld(dt) {
+  for (const c of clouds) {
+    c.position.x += dt * 2.5;
+    if (c.position.x > 380) c.position.x = -380;
+  }
+}
+
+export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5, 0.8, 0.3) } = {}) {
+  const before = new Set(scene.children);
+  addSky(scene, sunDir.clone().normalize());
   const geo = new THREE.PlaneGeometry(WORLD * 2, WORLD * 2, 150, 150);
   const colors = [];
   const c = new THREE.Color();
@@ -313,10 +462,12 @@ export function buildWorld(scene) {
     colors.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  const ground = mesh(geo, std(0xffffff, { vertexColors: true }));
+  grassTex.repeat.set(70, 70);
+  const ground = mesh(geo, std(0xffffff, { vertexColors: true, map: grassTex }));
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
-  const path = mesh(new THREE.PlaneGeometry(6, 152), std(0xb89a62));
+  dirtTex.repeat.set(1.5, 38);
+  const path = mesh(new THREE.PlaneGeometry(6, 152), std(0xffffff, { map: dirtTex }));
   path.rotation.x = -Math.PI / 2;
   path.position.set(0, 0.02, -6);
   scene.add(path);
@@ -326,5 +477,35 @@ export function buildWorld(scene) {
   addEnemyCastle(scene);
   addVillage(scene);
   addMountains(scene);
-  addForest(scene);
+  addPond(scene);
+  addForest(scene, low);
+  mergeStatic(scene, before);
+}
+
+// Alle festen Teile mit gleichem Material zu einem Objekt zusammenfassen:
+// viel weniger Zeichenaufrufe, darum läuft es auch auf dem Handy flüssig
+function mergeStatic(scene, before) {
+  const groups = new Map();
+  for (const m of [...scene.children]) {
+    if (before.has(m) || !m.isMesh || m.isInstancedMesh || m.material.isShaderMaterial || m.material.transparent) continue;
+    const attrs = Object.keys(m.geometry.attributes).sort().join(',');
+    const key = m.material.uuid + '|' + attrs;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const geos = list.map((m) => {
+      m.updateMatrixWorld(true);
+      const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrixWorld);
+      return g;
+    });
+    const merged = mergeGeometries(geos, false);
+    if (!merged) continue;
+    const big = new THREE.Mesh(merged, list[0].material);
+    big.castShadow = big.receiveShadow = true;
+    list.forEach((m) => scene.remove(m));
+    geos.forEach((g) => g.dispose());
+    scene.add(big);
+  }
 }

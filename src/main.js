@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
-import { buildWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS } from './world.js';
+import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS } from './world.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
@@ -22,19 +22,21 @@ document.body.prepend(renderer.domElement);
 addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
 
 const scene = new THREE.Scene();
-const SKY = 0x9fd3f0;
+const SKY = 0xcfe9f7;
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 70, 240);
-scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x4a6b2a, 1.0));
-const sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
-sun.position.set(70, 110, 40);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x5a7a3a, 1.05));
+const SUN_DIR = new THREE.Vector3(70, 110, 40).normalize();
+const sun = new THREE.DirectionalLight(0xfff0d0, 2.4);
+sun.position.copy(SUN_DIR).multiplyScalar(150);
+scene.add(sun.target);
 sun.castShadow = true;
-sun.shadow.mapSize.set(isTouch ? 2048 : 4096, isTouch ? 2048 : 4096);
+sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
 sun.shadow.bias = -0.0005;
-Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -160, far: 350 });
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 400 });
 scene.add(sun);
 
-buildWorld(scene);
+buildWorld(scene, { low: isTouch, sunDir: SUN_DIR });
 
 // ================= Regeln =================
 const RANKS = ['Bauer', 'Ritter', 'Schmied', 'Landherr', 'König', 'Kaiser', 'Militär'];
@@ -144,7 +146,7 @@ function createPlayer(index, keymap, source) {
   scene.add(p.root);
   p.bar = makeBar();
   p.root.add(p.bar);
-  p.cam = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
+  p.cam = new THREE.PerspectiveCamera(60, 1, 0.1, 1500);
   p.hud = $('hud' + index);
   p.hud.querySelector('.keys').textContent = (KEY_HINTS[keymap] || '').replace('angreifen', kid ? 'zaubern' : 'angreifen').replace('Waffe wechseln', kid ? 'Zauber wechseln' : 'Waffe wechseln');
   p.hudCache = '';
@@ -1884,7 +1886,7 @@ $('btnJoin').onclick = async () => {
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
-const menuCam = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+const menuCam = new THREE.PerspectiveCamera(55, 1, 0.1, 1500);
 let menuT = 0;
 
 let lastFrame = performance.now();
@@ -1940,10 +1942,31 @@ function step(dt) {
     poseBuilds(dt);
   }
   updateFrogs(dt);
+  updateWorld(dt);
   updateFloaters(scene, dt);
 }
 
+// Schatten nur rund um die Spieler berechnen: schärfer und schneller
+const shadowFocus = new THREE.Vector3();
+function followShadows() {
+  const ps = started ? players.filter((p) => !p.out) : [];
+  let size = 60;
+  if (!ps.length) shadowFocus.set(0, 0, -20);
+  else {
+    shadowFocus.set(0, 0, 0);
+    ps.forEach((p) => shadowFocus.add(p.root.position));
+    shadowFocus.divideScalar(ps.length);
+    if (ps.length > 1) size = Math.max(60, ps[0].root.position.distanceTo(ps[1].root.position) / 2 + 40);
+  }
+  if (!started) size = 160;
+  const cam = sun.shadow.camera;
+  if (cam.right !== size) { cam.left = cam.bottom = -size; cam.right = cam.top = size; cam.updateProjectionMatrix(); }
+  sun.target.position.copy(shadowFocus);
+  sun.position.copy(shadowFocus).addScaledVector(SUN_DIR, 150);
+}
+
 function render() {
+  followShadows();
   const w = innerWidth, h = innerHeight;
   if (!started) {
     // Langsamer Flug um die Welt hinter dem Menü
@@ -1976,5 +1999,5 @@ function render() {
   }
 }
 
-window.game = { get players() { return players; }, enemies, animals, items, keys, startGame, step, render };   // zum Ausprobieren in der Konsole
+window.game = { get players() { return players; }, enemies, animals, items, keys, startGame, step, render, renderer };   // zum Ausprobieren in der Konsole
 tick();
