@@ -8,19 +8,38 @@ import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
 
 const $ = (id) => document.getElementById(id);
-const isTouch = matchMedia('(pointer: coarse)').matches;
+// iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
+const isTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 1 && /Mac|iPad/.test(navigator.platform || navigator.userAgent));
 if (isTouch) document.body.classList.add('touch');
 
 // ================= Grundaufbau =================
 const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.5 : 2));
-renderer.setSize(innerWidth, innerHeight);
+// Bildgröße immer an das Fenster anpassen. Auf großen Tablet-Bildschirmen die Auflösung begrenzen,
+// sonst bekommt der Browser nicht genug Grafikspeicher und zeichnet nur einen Teil des Bildes.
+const viewSize = () => ({ w: Math.max(1, Math.round(innerWidth)), h: Math.max(1, Math.round(innerHeight)) });
+function fitRenderer() {
+  const { w, h } = viewSize();
+  const pr = Math.min(devicePixelRatio || 1, isTouch ? 1.5 : 2, Math.sqrt(3.5e6 / (w * h)));
+  const c = renderer.domElement;
+  if (c.width === Math.floor(w * pr) && c.height === Math.floor(h * pr)) return;
+  renderer.setPixelRatio(pr);
+  renderer.setSize(w, h);
+}
+fitRenderer();
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 document.body.prepend(renderer.domElement);
-addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+addEventListener('resize', fitRenderer);
+addEventListener('orientationchange', () => setTimeout(fitRenderer, 300));
+visualViewport?.addEventListener('resize', fitRenderer);
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  // Falls der Browser die Grafik verliert (z. B. zu wenig Speicher): kurz Bescheid sagen und neu laden
+  e.preventDefault();
+  showMsg('msg', 'Grafik wird neu geladen …', 3000);
+  setTimeout(() => location.reload(), 1500);
+});
 
 const scene = new THREE.Scene();
 const SKY = 0xcfe9f7;
@@ -1967,8 +1986,9 @@ function followShadows() {
 }
 
 function render() {
+  fitRenderer();
   followShadows();
-  const w = innerWidth, h = innerHeight;
+  const { w, h } = viewSize();
   if (!started) {
     // Langsamer Flug um die Welt hinter dem Menü
     menuT += 0.0008;
