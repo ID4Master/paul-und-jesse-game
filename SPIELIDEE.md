@@ -57,7 +57,7 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
 - Ränge: Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär (alle 3 besiegten Gegner)
 - Mit jedem Rang bessere Rüstung (Helm, Brustpanzer, Schulterplatten, Umhang, Krone, Gold), sie hält auch mehr Schaden ab
 - Waffen: Mistgabel und Bogen (grob zielen reicht, der Pfeil fliegt zum Ziel)
-- Sonderwaffen zum Einsammeln für 15 Sekunden: Feuerschwert und Maschinengewehr
+- Sonderwaffen zum Einsammeln für 15 Sekunden (kinderfreundlich 25 Sekunden): Feuerschwert und Maschinengewehr. Danach kommt eine Meldung und es geht mit der normalen Waffe weiter; auf dem Touch-Gerät zeigt ein gelber Ring am Angriffsknopf die Restzeit
 - Jeder hat 3 Leben. Wer alle verloren hat, wartet auf den anderen. Sind beide raus, beginnt alles neu als Bauer
 - Gegner fallen lassen Herzen (+30), goldene Herzen (+1 Leben) oder Sonderwaffen
 - Wachen kreisen um euch, greifen höchstens zu zweit an, weichen aus und ziehen sich verletzt zurück

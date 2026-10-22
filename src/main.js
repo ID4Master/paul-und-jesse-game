@@ -64,7 +64,7 @@ const RANK_COLORS = [0x8b6b3d, 0x7a8590, 0x4a4a4a, 0x2e7d32, 0x6a1b9a, 0x8a6d1f,
 const KILLS_PER_LEVEL = 3;
 const MAX_LEVEL = RANKS.length - 1;
 const START_LIVES = 3;
-const SPECIAL_TIME = 15;
+const specialTime = () => (kid ? 25 : 15);   // Sonderwaffen halten eine Weile, dann geht es mit der normalen Waffe weiter
 
 const WEAPONS = {
   fork:      { name: 'Mistgabel', icon: '🔱', melee: true, range: 3.6, cone: 0.2, dmg: 10, cd: 0.45 },
@@ -515,10 +515,10 @@ function pickUp(item, p) {
   if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); fxFloat('Lecker! +40', '#ffcc80', pos); }
   if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); fxFloat('+1 Leben', '#ffd54f', pos); }
   if (item.type === 'gun' || item.type === 'firesword') {
-    p.special = { type: item.type, t: SPECIAL_TIME };
+    p.special = { type: item.type, t: specialTime(), max: specialTime() };
     p.weapon = item.type;
     setWeapon(p.h, wModel(p.weapon));
-    fxPlayerMsg(p.index, `${wIcon(item.type)} ${wName(item.type)} für ${SPECIAL_TIME} Sekunden!`);
+    fxPlayerMsg(p.index, `${wIcon(item.type)} ${wName(item.type)} für ${specialTime()} Sekunden! Die Uhr am Knopf zeigt, wie lange noch.`);
   }
   fxSfx('pickup');
 }
@@ -633,6 +633,10 @@ function autoTarget(p, range, maxAngle) {
 
 function attack(p) {
   const W = WEAPONS[p.weapon];
+  if (kid && wizard && !wizard.gone && p.root.position.distanceTo(wizard.root.position) < 14 && (p.wizHintT || 0) < performance.now()) {
+    p.wizHintT = performance.now() + 15000;
+    fxPlayerMsg(p.index, `Den Zauberer kann man nicht verzaubern! Befreie alle Tiere aus den Käfigen (noch ${CAGE_SPOTS.length - freed}), dann wird er zum Frosch.`, 4500);
+  }
   p.cooldown = W.cd;
   p.attackDur = W.melee ? 0.35 : Math.min(0.25, W.cd);
   p.attackT = p.attackDur;
@@ -708,7 +712,12 @@ function readLocalInput(p) {
   joy.addEventListener('pointerup', release);
   joy.addEventListener('pointercancel', release);
   const atk = $('tAttack');
-  atk.addEventListener('pointerdown', (e) => { atk.setPointerCapture(e.pointerId); initAudio(); touchIn.attack = true; });
+  atk.addEventListener('pointerdown', (e) => { e.preventDefault(); atk.setPointerCapture(e.pointerId); initAudio(); touchIn.attack = true; });
+  // iPad/iPhone: langes Drücken öffnet sonst ein Menü oder die Lupe, dann bricht der Knopf ab
+  for (const el of [atk, $('tSwap'), joy]) {
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    el.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+  }
   atk.addEventListener('pointerup', () => (touchIn.attack = false));
   atk.addEventListener('pointercancel', () => (touchIn.attack = false));
   $('tSwap').addEventListener('pointerdown', () => { const p = players[me]; if (p) p.swapReq = true; });
@@ -739,6 +748,9 @@ function updatePlayerLogic(p, dt) {
     if (p.special) {
       p.special.t -= dt;
       if (p.special.t <= 0) {
+        // Deutlich sagen, dass die Sonderwaffe vorbei ist, damit niemand denkt, das Spiel hängt
+        fxPlayerMsg(p.index, `${wIcon(p.special.type)} ${wName(p.special.type)} ist leer. Weiter geht's mit ${wIcon(p.baseWeapon)} ${wName(p.baseWeapon)}!`, 3000);
+        fxSfx('plop');
         if (p.weapon === p.special.type) { p.weapon = p.baseWeapon; setWeapon(p.h, wModel(p.weapon)); }
         p.special = null;
       }
@@ -789,6 +801,7 @@ function posePlayer(p, dt) {
   animateHuman(p.h, p.walk, !!p.moving, armR, armL);
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
+  if (isTouch && p.index === me) updateAttackButton(p);
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist
   const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
@@ -802,6 +815,19 @@ function posePlayer(p, dt) {
   if (!p.camInit) { p.cam.position.copy(camPos); p.camInit = true; }
   p.cam.position.lerp(camPos, 1 - Math.exp(-dt * 10));
   p.cam.lookAt(camLook);
+}
+
+// Angriffsknopf zeigt die aktuelle Waffe; bei einer Sonderwaffe läuft ein gelber Ring ab
+let atkKey = '';
+function updateAttackButton(p) {
+  const sp = p.special && p.weapon === p.special.type ? p.special : null;
+  const pct = sp ? Math.max(0, Math.round((sp.t / (sp.max || 15)) * 100)) : 100;
+  const key = wIcon(p.weapon) + pct;
+  if (key === atkKey) return;
+  atkKey = key;
+  const btn = $('tAttack');
+  btn.textContent = wIcon(p.weapon);
+  btn.style.background = sp ? `conic-gradient(#ffd54fcc ${pct}%, #ffffff30 0)` : '';
 }
 
 // Wer keine Leben mehr hat, schaut beim anderen zu
@@ -1699,7 +1725,7 @@ function applySnapshot(s) {
     if (attackT > p.attackT) { p.attackT = attackT; p.attackDur = attackDur; }
     if (level !== p.level) { p.level = level; applyLevel(p); }
     if (weapon !== p.weapon) { p.weapon = weapon; setWeapon(p.h, wModel(weapon)); }
-    p.special = spType ? { type: spType, t: spT } : null;
+    p.special = spType ? { type: spType, t: spT, max: specialTime() } : null;
   });
   syncMap(remote.enemies, s.e,
     ([id, archer, x, z]) => Object.assign(makeEnemyEntity(!!archer, x, z), { id }),
