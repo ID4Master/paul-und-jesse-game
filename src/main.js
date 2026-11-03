@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
 import { setGrassFocus } from './grass.js';
-import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS } from './world.js';
+import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS } from './world.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
@@ -161,7 +161,7 @@ function createPlayer(index, keymap, source) {
     index, name: 'Spieler ' + (index + 1), startX: index ? 2.5 : -2.5, startWeapon: index ? 'bow' : 'fork',
     keymap: KEYMAPS[keymap], source, input: { fwd: 0, turn: 0, attack: false }, swapReq: false,
   };
-  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun', 'wand', 'orbwand', 'starstaff', 'bubbler'] });
+  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun', 'wand', 'orbwand', 'starstaff', 'bubbler', 'axe', 'pickaxe'] });
   p.root = p.h.root;
   scene.add(p.root);
   p.bar = makeBar();
@@ -189,6 +189,8 @@ function resetPlayer(p) {
   p.special = null;
   p.apples = 0;
   p.pack = { wood: 0, stone: 0, soap: 0, star: 0 };
+  p.toolShow = '';
+  p.toolT = 0;
   p.weapon = p.baseWeapon = p.startWeapon;
   setWeapon(p.h, wModel(p.weapon));
   applyLevel(p);
@@ -220,8 +222,9 @@ function updateHud(p) {
     + (p.special && p.weapon !== p.special.type ? ` · ${wIcon(p.special.type)} bereit` : '');
   const xp = p.level >= MAX_LEVEL ? 'Höchster Rang erreicht!'
     : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
-  const xpLine = kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · ${xp}` : xp;
-  const packLine = kid ? `🎒 Rucksack (${packCount(p)}/${PACK_SIZE}): ${matText(p.pack) || 'leer'}` : '';
+  const xpLine = kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · 💎 ${treasures}/${CAVES.length} Schätze · ${xp}` : xp;
+  const toolText = [built.axe ? '🪓' : '', built.pickaxe ? '⛏️' : ''].join('');
+  const packLine = kid ? `🎒 Rucksack (${packCount(p)}/${PACK_SIZE}): ${matText(p.pack) || 'leer'}${toolText ? ' · Werkzeug: ' + toolText : ''}` : '';
   const key = [hp, p.level, lives, weapon, xpLine, packLine].join('|');
   if (key === p.hudCache) return;
   p.hudCache = key;
@@ -417,7 +420,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { axe: 0xffb74d, pickaxe: 0x90caf9, wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -469,6 +472,12 @@ function makeItemEntity(type, x, z) {
     leaf.scale.set(1, 0.3, 0.6);
     model.add(leaf);
   }
+  if (type === 'axe' || type === 'pickaxe') {
+    const w = makeWeaponModel(type);
+    w.rotation.x = -Math.PI / 2;
+    w.position.y = -0.55;
+    model.add(w);
+  }
   if (type === 'gun' || type === 'firesword') {
     const w = makeWeaponModel(wModel(type));
     w.rotation.y = Math.PI / 2;
@@ -492,6 +501,10 @@ function dropItem(type, pos) {
 
 function pickUp(item, p) {
   const pos = p.root.position;
+  if (TOOLS.includes(item.type)) {
+    if (!built[item.type]) gotTool(item.type, p, true);
+    return true;
+  }
   if (MATERIALS.includes(item.type)) {
     if (packCount(p) >= PACK_SIZE) {
       if ((p.fullHintT || 0) < performance.now()) {
@@ -523,11 +536,14 @@ function pickUp(item, p) {
   fxSfx('pickup');
 }
 
+// Werkzeuge bleiben liegen, bis man sie findet
+const itemLife = (type) => (TOOLS.includes(type) ? Infinity : MATERIALS.includes(type) ? 60 : 30);
+
 function updateItems(dt) {
   for (const it of [...items]) {
     const p = alivePlayers().find((q) => q.root.position.distanceTo(it.g.position) < 1.6);
     const taken = p && pickUp(it, p) !== false;
-    if (taken || it.t > (MATERIALS.includes(it.type) ? 60 : 30)) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
+    if (taken || it.t > itemLife(it.type)) { scene.remove(it.g); if (items.includes(it)) items.splice(items.indexOf(it), 1); }
   }
 }
 
@@ -536,7 +552,7 @@ function poseItems(dt) {
     it.t += dt;
     it.model.rotation.y += dt * 2;
     it.model.position.y = 0.9 + Math.sin(it.t * 3) * 0.15;
-    const life = MATERIALS.includes(it.type) ? 60 : 30;
+    const life = itemLife(it.type);
     it.g.visible = it.t < life - 5 || Math.floor(it.t * 6) % 2 === 0;   // blinkt kurz vor dem Verschwinden
   }
 }
@@ -632,6 +648,7 @@ function autoTarget(p, range, maxAngle) {
 }
 
 function attack(p) {
+  if (kid && useTool(p)) return;
   const W = WEAPONS[p.weapon];
   if (kid && wizard && !wizard.gone && p.root.position.distanceTo(wizard.root.position) < 14 && (p.wizHintT || 0) < performance.now()) {
     p.wizHintT = performance.now() + 15000;
@@ -757,6 +774,7 @@ function updatePlayerLogic(p, dt) {
     }
   }
   p.swapReq = false;
+  if (p.toolT > 0 && (p.toolT -= dt) <= 0) p.toolShow = '';
   p.attackT = Math.max(0, p.attackT - dt);
   // Der Körper dreht sich beim Angriff zum Ziel, die Kamera bleibt ruhig hinter dem Spieler
   p.faceT -= dt;
@@ -781,15 +799,17 @@ function posePlayer(p, dt) {
   const wpn = p.h.weapon;
   let armR, armL;
   wpn.position.z = 0;
-  if (p.weapon === 'fork') {
+  const shown = p.toolShow || p.weapon;
+  if (p.h.currentWeapon !== (p.toolShow || wModel(p.weapon))) setWeapon(p.h, p.toolShow || wModel(p.weapon));
+  if (shown === 'fork') {
     armR = -0.35 - s * 1.1;
     wpn.rotation.x = -armR - 0.25;
     wpn.position.z = s * 0.4;
-  } else if (p.weapon === 'bow') {
+  } else if (shown === 'bow') {
     armR = -1.45;
     armL = -1.3 + s * 0.3;
     wpn.rotation.x = -armR;
-  } else if (p.weapon === 'gun') {
+  } else if (shown === 'gun') {
     armR = -1.3;
     armL = -1.1;
     wpn.rotation.x = -armR;
@@ -1156,7 +1176,7 @@ function spawnCages() {
     const a = makeAnimalEntity(type, x, z);
     Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'captive' });
     animals.push(a);
-    cages.push({ kind: 'cage', id: nextId++, root, bar, hp: 3, maxHp: 3, dying: 0, circle, animal: a });
+    cages.push({ kind: 'cage', id: nextId++, idx: cages.length, root, bar, hp: 3, maxHp: 3, dying: 0, circle, animal: a });
   }
 }
 
@@ -1257,6 +1277,7 @@ function spawnKidWorld() {
   if (wizard) scene.remove(wizard.root);
   wizard = makeWizardEntity();
   for (let i = 0; i < 16; i++) spawnAnimal();
+  spawnTools();
 }
 
 // ================= Kinderfreundlich: Rucksack, Ablade-Fläche und Werkstatt =================
@@ -1282,7 +1303,13 @@ const BUILDS = [
     done: 'Im Apfelgarten in der Burg wachsen jetzt Äpfel für eure Tiere.' },
   { id: 'tower', name: 'Festturm', icon: '🏰', px: -13, pz: 63, x: 6, z: 86, cost: { stone: 6, wood: 2, star: 3 },
     done: 'Eure Burg ist jetzt die schönste im Land! Jeder bekommt ein Extra-Leben.' },
+  // Werkzeuge: kann man bauen oder irgendwo in der Welt finden
+  { id: 'axe', tool: true, name: 'Axt', icon: '🪓', px: -25, pz: 57, cost: { stone: 3 },
+    done: 'Jetzt könnt ihr Bäume fällen: vor einen Baum stellen und zaubern. Holz gibt es nur noch vom Bäumefällen.' },
+  { id: 'pickaxe', tool: true, name: 'Spitzhacke', icon: '⛏️', px: -25, pz: 63, cost: { wood: 4, stone: 4 },
+    done: 'Sucht an den Bergen einen Felsen mit Rissen und haut eine Höhle hinein. Drinnen wartet ein Schatz!' },
 ];
+const TOOLS = ['axe', 'pickaxe'];
 const built = {};
 
 // Leuchtende Fläche auf dem Boden mit Bild und Schrift
@@ -1349,14 +1376,14 @@ const flatLabel = (text) => {
 const workshop = new THREE.Group();
 {
   const wood = std(0x8a6a44);
-  const floor = mesh(new THREE.BoxGeometry(14, 0.08, 14), std(0xa1824f), -16, 0.02, 60);
+  const floor = mesh(new THREE.BoxGeometry(19.5, 0.08, 14), std(0xa1824f), -18.5, 0.02, 60);
   workshop.add(floor);
   workshop.add(mesh(new THREE.BoxGeometry(1, 0.9, 3), wood, -22.3, 0.45, 60));
   workshop.add(mesh(new THREE.BoxGeometry(0.5, 0.3, 0.7), std(0x777777), -22.3, 1.05, 59));
-  for (const x of [-22.5, -9.5]) workshop.add(mesh(new THREE.BoxGeometry(0.2, 3.4, 0.2), wood, x, 1.7, 52.8));
+  for (const x of [-28, -9.5]) workshop.add(mesh(new THREE.BoxGeometry(0.2, 3.4, 0.2), wood, x, 1.7, 52.8));
   const sign = flatLabel('🔨 Werkstatt');
-  sign.position.set(-16, 3.6, 52.8);
-  workshop.add(sign, mesh(new THREE.BoxGeometry(13.4, 0.15, 0.2), wood, -16, 3.0, 52.8));
+  sign.position.set(-18.75, 3.6, 52.8);
+  workshop.add(sign, mesh(new THREE.BoxGeometry(18.7, 0.15, 0.2), wood, -18.75, 3.0, 52.8));
   scene.add(workshop);
 }
 
@@ -1429,6 +1456,12 @@ function makeBuildModel(id) {
 function placeBuild(id) {
   const s = sites.find((x) => x.b.id === id);
   built[id] = true;
+  if (s.b.tool) {
+    // Werkzeug: kein Bauwerk, aber das Werkzeug in der Welt wird nicht mehr gebraucht
+    for (const it of [...items]) if (it.type === id) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
+    for (let k = 0; k < 6; k++) floatText(scene, '✨', '#ffd54f', { x: s.b.px + (Math.random() - 0.5) * 3, z: s.b.pz + (Math.random() - 0.5) * 3 }, 1 + Math.random() * 2);
+    return;
+  }
   s.model = makeBuildModel(id);
   s.model.position.set(s.b.x, 0, s.b.z);
   scene.add(s.model);
@@ -1580,7 +1613,7 @@ function poseBuilds(dt) {
   for (const s of sites) {
     const ready = Object.entries(s.b.cost).every(([m, n]) => store[m] >= n);
     const state = built[s.b.id] ? 'built' : ready ? 'ready' : 'normal';
-    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? '✔ gebaut' : matText(s.b.cost), state });
+    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? (s.b.tool ? '✔ habt ihr' : '✔ gebaut') : matText(s.b.cost), state });
     s.pad.material.opacity = state === 'ready' ? 0.75 + Math.sin(padPulse * 5) * 0.25 : 1;
   }
   const bar = $('store');
@@ -1603,12 +1636,296 @@ function resetBuilds() {
   updateSitesVisible();
 }
 
-// Holz und Steine tauchen in der Nähe der Spieler auf
+// ================= Kinderfreundlich: Werkzeuge, Bäume fällen, Höhlen und Schätze =================
+// Mit der Axt 🪓 fällt man Bäume (nur so gibt es Holz), mit der Spitzhacke ⛏️ haut man Höhlen in die Berge.
+// Beide Werkzeuge liegen irgendwo in der Welt oder werden in der Werkstatt gebaut. Sie gehören allen Spielern.
+const TOOL_SPOTS = { axe: { x: -33, z: 84 }, pickaxe: { x: 64, z: 24 } };
+const TREE_HITS = 3, REGROW = 150, CAVE_HITS = 5;
+
+function freeNear(x, z) {
+  for (let r = 0; r < 12; r += 0.75) {
+    for (let a = 0; a < 6.28; a += 0.5) {
+      const px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
+      if (!blockedSpot(px, pz, 1.2)) return { x: px, z: pz };
+    }
+  }
+  return { x, z };
+}
+
+function gotTool(id, p, found) {
+  const b = BUILDS.find((x) => x.id === id);
+  placeBuild(id);
+  emit(['b', id]);
+  fxGlobalMsg(`${b.icon} ${b.name} ${found ? 'gefunden' : 'gebaut'}! ${b.done}`, 6000);
+  fxSfx('levelUp');
+}
+
+function spawnTools() {
+  for (const id of TOOLS) {
+    if (built[id] || items.some((it) => it.type === id)) continue;
+    dropItem(id, freeNear(TOOL_SPOTS[id].x, TOOL_SPOTS[id].z));
+  }
+}
+
+// ---------- Bäume ----------
+const fallen = new Map();   // Baum-Nummer -> { t, dir, stump }
+const fallers = [];
+const stumpGeo = new THREE.CylinderGeometry(0.3, 0.4, 0.4, 8);
+const stumpMat = std(0x6b4a30);
+const stumpTop = std(0xd7b88a);
+const fallTrunk = std(0x5b3d26), fallPine = std(0x2f6b2a, { flatShading: true }), fallOak = std(0x3f8f3a, { flatShading: true });
+
+function nearestTree(pos, maxD) {
+  let best = -1, bestD = maxD;
+  TREES.forEach((t, i) => {
+    if (fallen.has(i)) return;
+    const d = Math.hypot(t.x - pos.x, t.z - pos.z) - t.circle.r;
+    if (d < bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+
+function fellTreeVisual(i, dir) {
+  const t = TREES[i];
+  setTreeVisible(t, false);
+  const stump = new THREE.Group();
+  stump.add(mesh(stumpGeo, stumpMat, 0, 0.2, 0), mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.02, 8), stumpTop, 0, 0.41, 0));
+  stump.position.set(t.x, 0, t.z);
+  stump.scale.setScalar(t.s);
+  scene.add(stump);
+  // Ein Baum zum Umfallen, der danach im Boden verschwindet
+  const outer = new THREE.Group(), inner = new THREE.Group();
+  outer.position.set(t.x, 0.35 * t.s, t.z);
+  outer.rotation.y = dir;
+  outer.add(inner);
+  inner.add(mesh(new THREE.CylinderGeometry(0.22, 0.32, 3, 7), fallTrunk, 0, 1.5, 0));
+  if (t.leafy) inner.add(mesh(new THREE.IcosahedronGeometry(2, 1), fallOak, 0, 3.9, 0));
+  else for (const [r, h, y] of [[2.1, 3, 2.7], [1.6, 2.6, 4.1], [1, 2.2, 5.3]]) inner.add(mesh(new THREE.ConeGeometry(r, h, 9), fallPine, 0, y, 0));
+  inner.scale.setScalar(t.s);
+  scene.add(outer);
+  fallers.push({ outer, inner, t: 0 });
+  fallen.set(i, { t: 0, dir, stump });
+}
+
+function regrowTree(i) {
+  const f = fallen.get(i);
+  if (!f) return;
+  scene.remove(f.stump);
+  fallen.delete(i);
+  setTreeVisible(TREES[i], true);
+}
+
+function updateFallers(dt) {
+  for (const f of [...fallers]) {
+    f.t += dt;
+    f.inner.rotation.x = Math.min(Math.PI / 2 - 0.08, f.t * f.t * 2.2);
+    if (f.t > 1.8) f.outer.position.y -= dt * 2;
+    if (f.t > 3) { scene.remove(f.outer); fallers.splice(fallers.indexOf(f), 1); }
+  }
+}
+
+function chopTree(p, i) {
+  const t = TREES[i];
+  t.hits = (t.hits || 0) + 1;
+  fxFloat(t.hits < TREE_HITS ? '🪓 Tock!' : '🌲 Baum fällt!', '#ffe0b2', { x: t.x, z: t.z });
+  fxSfx('chop');
+  if (t.hits < TREE_HITS) return;
+  t.hits = 0;
+  const pos = p.root.position;
+  const dir = Math.atan2(t.x - pos.x, t.z - pos.z);
+  fellTreeVisual(i, dir);
+  later(1.1, () => {
+    fxSfx('plop');
+    for (const k of [2, 3.6]) dropItem('wood', { x: t.x + Math.sin(dir) * k * t.s, z: t.z + Math.cos(dir) * k * t.s });
+  });
+}
+
+function updateTrees(dt) {
+  for (const [i, f] of fallen) {
+    f.t += dt;
+    const t = TREES[i];
+    if (f.t > REGROW && !players.some((p) => Math.hypot(p.root.position.x - t.x, p.root.position.z - t.z) < 3)) regrowTree(i);
+  }
+}
+
+// ---------- Höhlen in den Bergen ----------
+// Vorne an vier Bergen ist ein Felsen mit Rissen. Mit der Spitzhacke haut man ihn weg, dahinter ist eine Höhle mit Schatz.
+const CAVE_PICKS = [[0, 1], [7, 1], [3, 1], [10, -1]];   // [welcher Berg, Seite: 1 = zu eurer Burg, -1 = zur roten Burg]
+const CAVES = [];
+let treasures = 0;
+const rockMat = std(0x8f8a82, { flatShading: true }), crackRockMat = std(0xa8a39a, { flatShading: true });
+const crackMat = std(0x2b2622), darkMat = new THREE.MeshBasicMaterial({ color: 0x0b0806 });
+const chestWood = std(0x8d5a2b), chestGold = new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffa000, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3 });
+const GEM_COLORS = [0x40c4ff, 0xff4081, 0x69f0ae, 0xffd740, 0xb388ff];
+
+for (const [mi, side] of CAVE_PICKS) {
+  const m = MOUNTAINS[mi];
+  if (!m) continue;
+  const d = m.r * 0.9 + 1.2;
+  const g = new THREE.Group();
+  g.position.set(m.x, 0, m.z + side * d);
+  g.rotation.y = side > 0 ? 0 : Math.PI;   // vorne (+z) zeigt immer vom Berg weg
+  // Felsvorsprung, in den die Höhle gehauen wird
+  const mound = mesh(new THREE.IcosahedronGeometry(3, 1), rockMat, 0, 1.4, -0.6);
+  mound.scale.set(1.45, 1.15, 0.9);
+  g.add(mound);
+  // geschlossen: Felsen mit Rissen
+  const plug = new THREE.Group();
+  const boulder = mesh(new THREE.IcosahedronGeometry(1.5, 0), crackRockMat, 0, 1.2, 1.9);
+  boulder.scale.set(1.15, 1, 0.75);
+  plug.add(boulder);
+  for (const [x, y, rz, l] of [[-0.3, 1.5, 0.6, 1.2], [0.4, 1.0, -0.8, 1], [0, 0.6, 0.2, 0.8]]) {
+    const c = mesh(new THREE.BoxGeometry(0.07, l, 0.06), crackMat, x, y, 3.0);
+    c.rotation.z = rz;
+    plug.add(c);
+  }
+  g.add(plug);
+  // offen: dunkler Höhleneingang mit Steinbogen, Schatztruhe und Edelsteinen
+  const open = new THREE.Group();
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(1.5, 20, 0, Math.PI), darkMat);
+  hole.position.set(0, 0.02, 2.05);
+  const arch = mesh(new THREE.TorusGeometry(1.55, 0.28, 6, 16, Math.PI), rockMat, 0, 0, 2.1);
+  const chest = new THREE.Group();
+  chest.add(mesh(new THREE.BoxGeometry(1.1, 0.6, 0.7), chestWood, 0, 0.3, 0));
+  const lid = new THREE.Group();
+  lid.position.set(0, 0.6, -0.35);
+  lid.add(mesh(new THREE.BoxGeometry(1.15, 0.2, 0.75), chestWood, 0, 0.1, 0.375));
+  lid.add(mesh(new THREE.BoxGeometry(0.18, 0.2, 0.05), chestGold, 0, 0.0, 0.76));
+  chest.add(lid, mesh(new THREE.BoxGeometry(1.14, 0.08, 0.72), chestGold, 0, 0.45, 0));
+  chest.position.set(0, 0, 2.9);
+  const gems = new THREE.Group();
+  GEM_COLORS.forEach((col, k) => {
+    const a = (k / GEM_COLORS.length) * Math.PI * 2;
+    gems.add(mesh(new THREE.OctahedronGeometry(0.16), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 }), Math.sin(a) * 0.9, 0.2, 2.9 + Math.cos(a) * 0.6));
+  });
+  open.add(hole, arch, chest, gems);
+  open.visible = false;
+  g.add(open);
+  g.visible = false;
+  scene.add(g);
+  // Wo stellt man sich hin? Vor den Felsen (Welt-Koordinaten)
+  const spot = { x: m.x, z: m.z + side * (d + 3.6) };
+  const circle = { x: m.x, z: m.z + side * d, r: 2.6 };
+  CAVES.push({ g, plug, open, lid, gems, spot, side, circle, state: 0, hits: 0, hintT: 0, t: 0 });
+}
+
+function setCaveState(c, state) {
+  c.state = state;
+  c.plug.visible = state === 0;
+  c.open.visible = state > 0;
+  c.gems.visible = state === 1;
+  c.lid.rotation.x = state === 2 ? -1.9 : 0;
+  c.t = 0;
+}
+const updateCavesVisible = () => CAVES.forEach((c) => {
+  c.g.visible = kid && started;
+  const at = circles.indexOf(c.circle);
+  if (c.g.visible && at < 0) circles.push(c.circle);
+  if (!c.g.visible && at >= 0) circles.splice(at, 1);
+});
+
+function nearestCave(pos, maxD, state) {
+  let best = null, bestD = maxD;
+  for (const c of CAVES) {
+    if (c.state !== state) continue;
+    const d = Math.hypot(c.spot.x - pos.x, c.spot.z - pos.z);
+    if (d < bestD) { best = c; bestD = d; }
+  }
+  return best;
+}
+
+function digCave(p, c) {
+  c.hits++;
+  fxFloat(c.hits < CAVE_HITS ? `⛏️ Klonk! (${c.hits}/${CAVE_HITS})` : '🕳️ Eine Höhle!', '#e0e0e0', c.spot);
+  fxSfx('clink');
+  if (c.hits < CAVE_HITS) return;
+  setCaveState(c, 1);
+  fxSfx('poof');
+  dropItem('stone', { x: c.spot.x - 1.5, z: c.spot.z });
+  dropItem('stone', { x: c.spot.x + 1.5, z: c.spot.z });
+  fxPlayerMsg(p.index, '🕳️ Ihr habt eine Höhle gehauen! Da glitzert etwas … lauf zur Truhe!', 4000);
+}
+
+function lootCave(p, c) {
+  setCaveState(c, 2);
+  treasures++;
+  fxSfx('levelUp');
+  fxFloat('💎 Schatz! 💎', '#ffd54f', c.spot);
+  for (const [type, dx] of [['star', -1.2], ['star', 1.2], ['life', 0], ['stone', -2.2], ['stone', 2.2]]) dropItem(type, { x: c.spot.x + dx, z: c.spot.z + c.side * 0.8 });
+  if (treasures >= CAVES.length) fxGlobalMsg('👑 Alle Schätze gefunden! Ihr seid echte Schatzsucher! 👑', 6000);
+  else fxPlayerMsg(p.index, `💎 Schatz gefunden! Noch ${CAVES.length - treasures} Höhlen sind versteckt. Sucht an den anderen Bergen!`, 4500);
+}
+
+function updateCaves(dt) {
+  if (!kid) return;
+  for (const c of CAVES) {
+    c.hintT -= dt;
+    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - c.spot.x, q.root.position.z - c.spot.z) < (c.state === 1 ? 2.2 : 5));
+    if (!p) continue;
+    if (c.state === 1) { if (c.t > 1.5) lootCave(p, c); }
+    else if (c.state === 0 && !built.pickaxe && c.hintT <= 0) {
+      c.hintT = 15;
+      fxPlayerMsg(p.index, '🪨 Ein Felsen mit Rissen! Mit einer Spitzhacke ⛏️ könnt ihr hier eine Höhle hauen. Baut sie in der Werkstatt oder sucht sie beim Teich.', 4500);
+    }
+  }
+}
+
+function poseCaves(dt) {
+  for (const c of CAVES) {
+    c.t += dt;
+    if (c.state !== 1) continue;
+    c.gems.children.forEach((gm, k) => { gm.rotation.y += dt * 2; gm.position.y = 0.25 + Math.sin(c.t * 3 + k) * 0.08; });
+  }
+}
+
+// Zaubern-Knopf in der Nähe von Baum oder Felsen: Werkzeug benutzen statt zaubern
+function useTool(p) {
+  const pos = p.root.position;
+  const foe = autoTarget(p, 6, 1.4);
+  if (foe && foe.kind !== 'cage') return false;   // Schelme gehen vor
+  const swing = (tool, x, z) => {
+    p.toolShow = tool;
+    p.toolT = 0.45;
+    p.cooldown = 0.45;
+    p.attackDur = p.attackT = 0.4;
+    p.justAttacked = true;
+    p.face = Math.atan2(x - pos.x, z - pos.z);
+    p.faceT = 0.6;
+  };
+  const c = nearestCave(pos, 3.2, 0);
+  if (c) {
+    if (built.pickaxe) { swing('pickaxe', c.spot.x, c.spot.z - c.side * 3); digCave(p, c); return true; }
+    return false;
+  }
+  const i = nearestTree(pos, 1.6);
+  if (i < 0) return false;
+  const t = TREES[i];
+  const ang = Math.abs(angleDiff(Math.atan2(t.x - pos.x, t.z - pos.z), p.heading));
+  if (ang > 1.3) return false;
+  if (built.axe) { swing('axe', t.x, t.z); chopTree(p, i); return true; }
+  if ((p.axeHintT || 0) < performance.now()) {
+    p.axeHintT = performance.now() + 12000;
+    fxPlayerMsg(p.index, '🪵 Holz gibt es nur vom Bäumefällen. Dafür braucht ihr eine Axt 🪓: Sie liegt im Wald links neben eurer Burg, oder baut sie in der Werkstatt.', 4500);
+  }
+  return false;
+}
+
+function resetWorldStuff() {
+  for (const i of [...fallen.keys()]) regrowTree(i);
+  for (const f of fallers) scene.remove(f.outer);
+  fallers.length = 0;
+  for (const t of TREES) t.hits = 0;
+  for (const c of CAVES) { c.hits = 0; setCaveState(c, 0); }
+  treasures = 0;
+}
+CAVES.forEach((c) => setCaveState(c, 0));
+
+// Steine tauchen in der Nähe der Spieler auf (Holz gibt es nur vom Bäumefällen)
 let matTimer = 2;
 function spawnMaterials(dt) {
   if (!kid || (matTimer -= dt) > 0) return;
-  matTimer = 4;
-  const type = Math.random() < 0.55 ? 'wood' : 'stone';
+  matTimer = 5;
+  const type = 'stone';   // Holz gibt es nur noch vom Bäumefällen mit der Axt
   if (items.filter((it) => it.type === type).length >= 10) return;
   const ps = alivePlayers();
   if (!ps.length) return;
@@ -1616,7 +1933,7 @@ function spawnMaterials(dt) {
   for (let n = 0; n < 20; n++) {
     const a = Math.random() * Math.PI * 2, r = 10 + Math.random() * 20;
     const x = base.x + Math.sin(a) * r, z = base.z + Math.cos(a) * r;
-    if (!blockedSpot(x, z) && !inCastle({ x, z }) && !(x < -8 && x > -24 && z > 52 && z < 68)) { dropItem(type, { x, z }); return; }
+    if (!blockedSpot(x, z, 1) && !inCastle({ x, z }) && !(x < -8 && x > -30 && z > 52 && z < 68)) { dropItem(type, { x, z }); return; }
   }
 }
 
@@ -1668,6 +1985,7 @@ function resetGame() {
     cages.length = 0;
     pending = [];
     resetBuilds();
+    resetWorldStuff();
     spawnKidWorld();
   }
 }
@@ -1680,7 +1998,7 @@ function buildSnapshot() {
     t: 's',
     p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
       p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
-      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m])]),
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
     a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
@@ -1692,6 +2010,9 @@ function buildSnapshot() {
     fr: freed,
     st: MATERIALS.map((m) => store[m]),
     bl: Object.keys(built).filter((k) => built[k]),
+    tf: [...fallen].map(([i, f]) => [i, r2(f.dir)]),
+    cv: CAVES.map((c) => c.state),
+    ts: treasures,
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     ev: netEvents.splice(0),
   };
@@ -1714,8 +2035,9 @@ function applySnapshot(s) {
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
-    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack] = row;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack, tool] = row;
     p.apples = apples || 0;
+    p.toolShow = tool || '';
     if (pack) MATERIALS.forEach((m, k) => (p.pack[m] = pack[k]));
     p.tx = x; p.tz = z;
     p.heading = heading; p.bodyYaw = bodyYaw;
@@ -1749,6 +2071,13 @@ function applySnapshot(s) {
     for (const id of s.bl) if (!built[id]) placeBuild(id);
     if (!s.bl.length && Object.values(built).some(Boolean)) resetBuilds();
   }
+  if (s.tf) {
+    const now = new Map(s.tf);
+    for (const [i, dir] of now) if (!fallen.has(i)) fellTreeVisual(i, dir);
+    for (const i of [...fallen.keys()]) if (!now.has(i)) regrowTree(i);
+  }
+  if (s.cv) s.cv.forEach((st, k) => { if (CAVES[k] && CAVES[k].state !== st) setCaveState(CAVES[k], st); });
+  treasures = s.ts || 0;
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
     seenB.add(id);
@@ -1832,6 +2161,7 @@ function startGame(newMode) {
   me = mode === 'client' ? 1 : 0;
   const body = document.body;
   body.classList.add('playing', mode === 'local' ? 'split' : 'full');
+  if (mode === 'client') body.classList.add('client');
   if (mode === 'single') players = [createPlayer(0, 'all', 'local')];
   if (mode === 'local') players = [createPlayer(0, 'p1', 'local'), createPlayer(1, 'p2', 'local')];
   if (mode === 'host') players = [createPlayer(0, 'all', 'local'), createPlayer(1, 'all', 'remote')];
@@ -1845,6 +2175,7 @@ function startGame(newMode) {
   }
   started = true;
   updateSitesVisible();
+  updateCavesVisible();
   $('tAttack').textContent = kid ? '🪄' : '⚔️';
   const goal = kid ? 'Der böse Zauberer hat Tiere eingesperrt: befreit sie alle! Äpfel 🍎 sammeln, Tiere füttern, ab in den Stall.' : 'Erobere die rote Burg!';
   const swapKey = isTouch ? '🔄' : 'Q / Shift';
@@ -1855,6 +2186,7 @@ function startGame(newMode) {
     client: `Du bist Spieler 2 mit ${kid ? 'den Zauberkugeln' : 'dem Bogen'}. Helft euch gegenseitig!`,
   }[mode];
   showMsg('msg', text, 4000);
+  if (kid && isSim()) later(9, () => { if (!built.axe) fxGlobalMsg('Tipp: Holz gibt es nur noch vom Bäumefällen. Sucht die Axt 🪓 im Wald links neben eurer Burg!', 5000); });
 }
 
 // ================= Startmenü =================
@@ -1879,7 +2211,7 @@ $('btnSingle').onclick = () => { initAudio(); startGame('single'); };
 $('btnLocal').onclick = () => { initAudio(); startGame('local'); };
 $('btnNet').onclick = () => { $('menuMain').hidden = true; $('menuNet').hidden = false; };
 $('btnBack').onclick = () => location.reload();
-$('menuBtn').onclick = () => location.reload();
+$('menuBtn').onclick = () => { saveToBrowser(); location.reload(); };
 const status = (html) => ($('netStatus').innerHTML = html);
 const netError = (err) => status('😕 Das hat nicht geklappt: ' + (err?.type === 'peer-unavailable' ? 'Code nicht gefunden.' : err?.message || err));
 
@@ -1930,6 +2262,149 @@ $('btnJoin').onclick = async () => {
   } catch (err) { netError(err); }
 };
 
+// ================= Spielstand speichern und laden =================
+// Automatisch im Browser (alle 20 Sekunden und beim Schließen) und auf Knopfdruck als Datei im Download-Ordner.
+// Im Startmenü kann man weiterspielen oder eine gespeicherte Datei laden.
+const SAVE_KEY = 'kic-save';
+const SAVE_APP = 'knights-in-castles';
+const int = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0)));
+
+function makeSave() {
+  const s = {
+    app: SAVE_APP, v: 1, when: new Date().toISOString(), kid,
+    players: players.map((p) => ({ level: p.level, kills: p.kills, lives: Math.max(1, p.lives), apples: p.apples, pack: { ...p.pack } })),
+  };
+  if (kid) {
+    Object.assign(s, {
+      store: { ...store },
+      built: Object.keys(built).filter((k) => built[k]),
+      freed: CAGE_SPOTS.map((_, i) => i).filter((i) => !cages.some((c) => c.idx === i && !c.dying)),
+      stall: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => a.type),
+      caves: CAVES.map((c) => c.state),
+      treasures,
+    });
+  }
+  return s;
+}
+
+function applySave(s) {
+  players.forEach((p, i) => {
+    const d = s.players?.[i];
+    if (!d) return;
+    p.level = int(d.level, 0, MAX_LEVEL);
+    p.kills = int(d.kills, 0, 9999);
+    p.lives = int(d.lives, 1, 5);
+    p.apples = int(d.apples, 0, 9);
+    for (const m of MATERIALS) p.pack[m] = int(d.pack?.[m], 0, PACK_SIZE);
+    applyLevel(p);
+  });
+  if (kid) {
+    for (const m of MATERIALS) store[m] = int(s.store?.[m], 0, 9999);
+    for (const id of s.built || []) if (sites.some((x) => x.b.id === id) && !built[id]) placeBuild(id);
+    // befreite Tiere: Käfig weg
+    for (const idx of s.freed || []) {
+      const c = cages.find((x) => x.idx === idx);
+      if (!c) continue;
+      scene.remove(c.root);
+      cages.splice(cages.indexOf(c), 1);
+      if (circles.includes(c.circle)) circles.splice(circles.indexOf(c.circle), 1);
+      scene.remove(c.animal.root);
+      animals.splice(animals.indexOf(c.animal), 1);
+      freed++;
+    }
+    // Tierfreunde wieder in den Stall
+    for (const type of (s.stall || []).slice(0, 40)) {
+      if (!PRODUCE[type]) continue;
+      const x = STALL.x1 + 2 + Math.random() * (STALL.x2 - STALL.x1 - 4), z = STALL.z1 + 2 + Math.random() * (STALL.z2 - STALL.z1 - 4);
+      const a = makeAnimalEntity(type, x, z);
+      Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'stall', prodT: PRODUCE[type][1] / 2 });
+      animals.push(a);
+    }
+    (s.caves || []).forEach((st, k) => { if (CAVES[k]) { setCaveState(CAVES[k], int(st, 0, 2)); CAVES[k].hits = 0; } });
+    treasures = int(s.treasures, 0, CAVES.length);
+    if (freed >= CAGE_SPOTS.length) win();
+  }
+  fxGlobalMsg('📂 Spielstand geladen! Weiter geht\'s.', 3500);
+}
+
+function saveToBrowser() {
+  if (!started || !isSim()) return false;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(makeSave())); return true; } catch { return false; }
+}
+
+function saveToFile() {
+  if (!started || !isSim()) return;
+  const data = makeSave();
+  saveToBrowser();
+  const d = new Date();
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}-${String(d.getMinutes()).padStart(2, '0')}`;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Knights-Spielstand_${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  showMsg('msg', '💾 Gespeichert! Die Datei liegt in deinem Download-Ordner.', 3500);
+  sfx.pickup();
+}
+
+setInterval(saveToBrowser, 20000);
+addEventListener('pagehide', saveToBrowser);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveToBrowser(); });
+$('saveBtn').onclick = (e) => { e.currentTarget.blur(); saveToFile(); };
+
+function readSave(text) {
+  try {
+    const s = JSON.parse(text);
+    if (s?.app === SAVE_APP && Array.isArray(s.players) && s.players.length) return s;
+  } catch { /* keine gültige Datei */ }
+  return null;
+}
+
+function saveSummary(s) {
+  const d = new Date(s.when);
+  const when = isNaN(d) ? '' : `${d.toLocaleDateString('de-DE')} um ${d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+  const lvl = Math.max(...s.players.map((p) => int(p.level, 0, MAX_LEVEL))) + 1;
+  const parts = [`${s.players.length === 1 ? '1 Spieler' : '2 Spieler'}`, `Level ${lvl}`];
+  if (s.kid) parts.push(`🐾 ${(s.freed || []).length} befreit`, `💎 ${s.treasures || 0} Schätze`);
+  return `Gespeichert am ${when} · ${parts.join(' · ')}${s.kid ? '' : ' · Ritter-Version'}`;
+}
+
+function continueFrom(s) {
+  initAudio();
+  kid = !!s.kid;
+  showKidSetting();
+  startGame(s.players.length >= 2 && !isTouch ? 'local' : 'single');
+  applySave(s);
+}
+
+{
+  let saved = null;
+  try { saved = readSave(localStorage.getItem(SAVE_KEY)); } catch { /* egal */ }
+  if (saved) {
+    $('saveBox').hidden = false;
+    $('saveInfo').textContent = saveSummary(saved);
+    $('btnContinue').onclick = () => continueFrom(saved);
+  }
+  $('btnLoadFile').onclick = () => $('loadFile').click();
+  $('loadFile').onchange = async () => {
+    const f = $('loadFile').files[0];
+    if (!f) return;
+    const s = readSave(await f.text());
+    if (s) continueFrom(s);
+    else {
+      if (!saved) $('btnContinue').style.display = 'none';
+      $('saveBox').hidden = false;
+      $('saveInfo').textContent = '😕 Das ist keine Spielstand-Datei von Knights in Castles.';
+    }
+  };
+}
+
+// Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
+if (location.search.includes('debug')) window.kic = { players: () => players, items, TREES, CAVES, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
+
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
 const menuCam = new THREE.PerspectiveCamera(55, 1, 0.1, 1500);
@@ -1965,6 +2440,8 @@ function step(dt) {
       spawnApples(dt);
       spawnMaterials(dt);
       updateBuildLogic(dt);
+      updateTrees(dt);
+      updateCaves(dt);
       updateCages(dt);
       updateWizardLogic(dt);
       updateItems(dt);
@@ -1986,6 +2463,8 @@ function step(dt) {
     players.forEach((p) => posePlayer(p, dt));
     players.forEach(spectate);
     poseBuilds(dt);
+    poseCaves(dt);
+    updateFallers(dt);
   }
   updateFrogs(dt);
   updateWorld(dt);

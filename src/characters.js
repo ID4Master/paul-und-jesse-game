@@ -119,6 +119,30 @@ function makeSnowball() {
   return g;
 }
 
+// ---------- Werkzeuge: Axt zum Bäumefällen, Spitzhacke für Höhlen ----------
+function makeAxe() {
+  const g = new THREE.Group();
+  const handle = mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.95, 8), std(0x8d6e4a), 0, 0, 0.42);
+  handle.rotation.x = Math.PI / 2;
+  const blade = mesh(new THREE.BoxGeometry(0.04, 0.3, 0.22), metal(0xb0b6bc), 0, 0.14, 0.82);
+  const edge = mesh(new THREE.BoxGeometry(0.045, 0.06, 0.24), metal(0xe8ecef), 0, 0.3, 0.82);
+  g.add(handle, blade, edge);
+  return g;
+}
+
+function makePickaxe() {
+  const g = new THREE.Group();
+  const handle = mesh(new THREE.CylinderGeometry(0.03, 0.035, 1.0, 8), std(0x8d6e4a), 0, 0, 0.45);
+  handle.rotation.x = Math.PI / 2;
+  const iron = metal(0x8a9096);
+  const head = mesh(new THREE.BoxGeometry(0.06, 0.6, 0.07), iron, 0, 0, 0.9);
+  const tipA = mesh(new THREE.ConeGeometry(0.045, 0.18, 6), iron, 0, 0.38, 0.9);
+  const tipB = mesh(new THREE.ConeGeometry(0.045, 0.18, 6), iron, 0, -0.38, 0.9);
+  tipB.rotation.x = Math.PI;
+  g.add(handle, head, tipA, tipB);
+  return g;
+}
+
 // Spitzer Zauberhut mit Sternen und weißer Bart für den bösen Zauberer
 export function addWizardLook(h) {
   const purple = std(0x4a148c), gold = glow(0xffd54f, 1);
@@ -254,6 +278,8 @@ export function makeHuman(o) {
     if (w === 'bubbler') add(w, makeBubbler());
     if (w === 'pillow') add(w, makePillow());
     if (w === 'snowball') add(w, makeSnowball());
+    if (w === 'axe') add(w, makeAxe());
+    if (w === 'pickaxe') add(w, makePickaxe());
   }
   setWeapon(h, o.weapons[0]);
   if (o.shield) {
@@ -481,6 +507,8 @@ export function animateAnimal(a, phase, moving) {
 
 // Kleines Waffenmodell, z. B. für Gegenstände am Boden
 export function makeWeaponModel(name) {
+  if (name === 'axe') return makeAxe();
+  if (name === 'pickaxe') return makePickaxe();
   if (name === 'starstaff') return makeStarStaff();
   if (name === 'bubbler') return makeBubbler();
   if (name === 'gun') return makeGun();

@@ -227,6 +227,9 @@ function addStall(scene) {
   addHay(scene, 18.5, 78.5);
 }
 
+// Berge: Mitte und Radius, damit man vorne an einem Berg eine Höhle hauen kann
+export const MOUNTAINS = [];
+
 function addMountains(scene) {
   for (const side of [-1, 1]) {
     for (let i = 0; i < 6; i++) {
@@ -252,6 +255,7 @@ function addMountains(scene) {
       geo.computeVertexNormals();
       scene.add(mesh(geo, std(0xffffff, { vertexColors: true, flatShading: true }), x, h / 2, z));
       circles.push({ x, z, r: r * 0.9 });
+      MOUNTAINS.push({ x, z, r });
     }
   }
 }
@@ -274,15 +278,30 @@ export function randomFreeSpot() {
   return { x: 40, z: 50 };
 }
 
+// Alle Bäume, damit man sie mit der Axt fällen kann (und sie später nachwachsen)
+export const TREES = [];
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+export function setTreeVisible(t, show) {
+  for (const { im, i, m } of t.parts) {
+    im.setMatrixAt(i, show ? m : ZERO);
+    im.instanceMatrix.needsUpdate = true;
+  }
+  const at = circles.indexOf(t.circle);
+  if (show && at < 0) circles.push(t.circle);
+  if (!show && at >= 0) circles.splice(at, 1);
+}
+
 function addForest(scene, low) {
-  const trees = [];
+  const trees = TREES;
   for (let n = 0; n < 500 && trees.length < 260; n++) {
     const x = (rand() - 0.5) * 280, z = (rand() - 0.5) * 280;
     if (!freeSpot(x, z)) continue;
     const s = 0.8 + rand() * 0.6;
-    trees.push({ x, z, s, leafy: rand() < 0.35 });
-    circles.push({ x, z, r: 0.5 * s });
+    const circle = { x, z, r: 0.5 * s };
+    trees.push({ x, z, s, leafy: rand() < 0.35, circle, parts: [] });
+    circles.push(circle);
   }
+  const keep = (t, im, i) => { const m = new THREE.Matrix4(); im.getMatrixAt(i, m); t.parts.push({ im, i, m }); };
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
   const finish = (im) => { im.castShadow = true; im.receiveShadow = true; scene.add(im); };
@@ -302,6 +321,7 @@ function addForest(scene, low) {
       li.setMatrixAt(i, m4.compose(pos.set(t.x, leafY[j] * t.s, t.z), q, sc));
       li.setColorAt(i, col);
     });
+    [trunks, ...leaves].forEach((im) => keep(t, im, i));
   });
   [trunks, ...leaves].forEach(finish);
 
@@ -322,6 +342,7 @@ function addForest(scene, low) {
       cm.setMatrixAt(i, m4.compose(pos.set(t.x + ox * t.s, oy * t.s, t.z + oz * t.s), q, sc));
       cm.setColorAt(i, col);
     });
+    [oakTrunks, ...crowns].forEach((im) => keep(t, im, i));
   });
   [oakTrunks, ...crowns].forEach(finish);
 

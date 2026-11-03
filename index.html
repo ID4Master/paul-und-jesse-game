@@ -36,6 +36,12 @@
   #menuBtn { position: fixed; top: 10px; right: 10px; display: none; background: #000a; color: #fff; border: 2px solid #fff8;
              border-radius: 8px; padding: 6px 12px; font-size: 15px; }
   body.playing #menuBtn { display: block; }
+  #saveBtn { position: fixed; top: 52px; right: 10px; display: none; background: #000a; color: #fff; border: 2px solid #fff8;
+             border-radius: 8px; padding: 6px 12px; font-size: 15px; }
+  body.playing #saveBtn { display: block; }
+  body.client #saveBtn { display: none; }
+  #saveBox[hidden] { display: none; }
+  #saveInfo { margin: -4px 0 6px; }
 
   /* Ein Bildschirm statt zwei (Einzelspieler, Netzwerk, Handy) */
   body.full .half, body.full .pmsg { width: 100%; left: 0 !important; }
@@ -111,6 +117,7 @@
     .hud { top: 8px; left: 8px !important; max-width: calc(100vw - 110px); }
     .hud #store { font-size: 11px; }
     #menuBtn { top: 8px; right: 8px; padding: 5px 9px; font-size: 13px; }
+    #saveBtn { top: 44px; right: 8px; padding: 5px 9px; font-size: 13px; }
     .hud .name { font-size: 16px; }
     .bar { width: 160px; height: 16px; }
     .hpnum { font-size: 12px; line-height: 16px; }
@@ -151,6 +158,7 @@
 <div class="pmsg" id="msg1" style="left:50%"></div>
 <div id="msg"></div>
 <button id="menuBtn">☰ Menü</button>
+<button id="saveBtn" title="Spielstand als Datei speichern">💾 Speichern</button>
 <div id="store" hidden></div>
 
 <div id="voice" hidden>
@@ -178,10 +186,16 @@
     </label>
     <p class="howto kidhint" id="kidHint"></p>
     <div id="menuMain">
+      <div id="saveBox" hidden>
+        <button class="big" id="btnContinue">▶ Weiterspielen</button>
+        <p class="howto" id="saveInfo"></p>
+      </div>
       <button class="big" id="btnSingle">🧑‍🌾 Einzelspieler</button>
       <button class="big desk" id="btnLocal">👥 Zu zweit an einer Tastatur</button>
       <button class="big desk" id="btnNet">🌐 Zu zweit übers Internet</button>
       <p class="mobileOnly howto">Auf dem Handy gibt es den Einzelspieler. Zu zweit spielt ihr am Computer.</p>
+      <button class="small" id="btnLoadFile">📂 Spielstand-Datei laden</button>
+      <input type="file" id="loadFile" accept=".json,application/json" hidden>
     </div>
     <div id="menuNet" hidden>
       <button class="big" id="btnHost">🏰 Spiel erstellen</button>

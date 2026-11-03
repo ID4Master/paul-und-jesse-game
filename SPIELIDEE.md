@@ -47,6 +47,16 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
     - ⛲ Heilbrunnen (🪨5 🧼1): schnell Energie auftanken
     - 🌳 Apfelgarten (🪵3 🪨2): wachsen Äpfel zum Tierefüttern
     - 🏰 Festturm mit goldener Flagge (🪨6 🪵2 ✨3): jeder bekommt ein Extra-Leben
+    - 🪓 Axt (🪨3) und ⛏️ Spitzhacke (🪵4 🪨4): Werkzeuge, die allen Spielern gehören
+  - Holz gibt es nur noch vom Bäumefällen: mit der Axt vor einen Baum stellen und 3× zaubern, der Baum fällt um und lässt 2 🪵 fallen. Nach gut 2 Minuten wächst er nach
+  - Die Axt liegt auch im Wald links neben eurer Burg, die Spitzhacke beim Teich (finden oder bauen)
+  - Höhlen: An vier Bergen ist ein Felsen mit Rissen. Mit der Spitzhacke 5× draufhauen, dann ist da eine Höhle mit Schatztruhe (✨✨, goldenes Herz, Steine). Anzeige 💎 Schätze x/4
+  - Den Zauberer kann man nicht direkt besiegen: wenn alle 6 Tiere frei sind, wird er zum Frosch
+- Spielstand speichern:
+  - Knopf „💾 Speichern“ oben rechts: lädt eine Datei `Knights-Spielstand_….json` in den Download-Ordner
+  - Außerdem speichert das Spiel automatisch im Browser (alle 20 Sekunden und beim Schließen)
+  - Im Startmenü: „▶ Weiterspielen“ (letzter Stand aus dem Browser) oder „📂 Spielstand-Datei laden“
+  - Gespeichert werden Level, Leben, Äpfel, Rucksack, Burglager, Bauwerke, Werkzeuge, befreite Tiere, Tiere im Stall, Höhlen und Schätze
   - Äpfel zum Einsammeln (+20 Energie), höchster Rang heißt „Burgheld“
   - Beim Netzwerkspiel gilt die Einstellung von dem, der das Spiel erstellt
 - Mit „Kinderfreundlich: Aus“ ist es die Ritter-Version unten (eher für ältere Kinder)

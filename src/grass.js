@@ -18,7 +18,7 @@ const uniforms = {
 const MASK = /* glsl */ `
 float grassMask(vec2 p) {
   if (abs(p.x) < 3.4 && p.y > -83.0 && p.y < 71.0) return 0.0;
-  if (p.x > -23.0 && p.x < -9.0 && p.y > 53.0 && p.y < 67.0) return 0.0;
+  if (p.x > -28.3 && p.x < -9.0 && p.y > 53.0 && p.y < 67.0) return 0.0;
   if (p.x > 16.0 && p.x < 32.0 && p.y > 64.0 && p.y < 80.0) return 0.0;
   if (abs(p.x - 8.0) < 2.4 && abs(p.y - 62.0) < 2.4) return 0.0;
   if (length(p - vec2(52.0, 38.0)) < 10.8) return 0.0;
