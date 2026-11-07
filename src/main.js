@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
 import { setGrassFocus, setGrassHoles } from './grass.js';
-import { buildMassif, cellAt, crackCell, setCellSolid, updateRoofs, dugKey, applyDugKey, resetMassif, neighbours } from './rocks.js';
+import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCellSolid, dugKey, applyDugKey, resetMassif, neighbours } from './rocks.js';
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS } from './world.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
@@ -824,16 +824,29 @@ function posePlayer(p, dt) {
   updateHud(p);
   if (isTouch && p.index === me) updateAttackButton(p);
 
-  // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist
+  // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist.
+  // In einer Höhle geht sie tief unter die Felsdecke und bleibt im Gang.
   const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+  const rx = root.position.x, rz = root.position.z;
+  const inCave = underRock(rx, rz);
+  p.caveK = (p.caveK || 0) + ((inCave ? 1 : 0) - (p.caveK || 0)) * Math.min(1, dt * 5);
   let wantDist = 7;
-  for (let d = 1; d <= 7; d += 0.5) {
-    if (solidAt(root.position.x - fx * d, root.position.z - fz * d)) { wantDist = Math.max(1.5, d - 1); break; }
+  if (inCave) {
+    wantDist = 4.5;
+    for (let d = 0.4; d <= 4.5; d += 0.25) {
+      const bx = rx - fx * d, bz = rz - fz * d;
+      if (solidAt(bx, bz) || solidAt(bx + fz * 0.35, bz - fx * 0.35) || solidAt(bx - fz * 0.35, bz + fx * 0.35)) { wantDist = Math.max(0.45, d - 0.45); break; }
+    }
+  } else {
+    for (let d = 1; d <= 7; d += 0.5) {
+      if (solidAt(rx - fx * d, rz - fz * d)) { wantDist = Math.max(1.5, d - 1); break; }
+    }
   }
   p.camDist += (wantDist - p.camDist) * Math.min(1, dt * (wantDist < p.camDist ? 10 : 3));
-  // Ist es eng (z. B. in einem gegrabenen Gang im Fels), schaut die Kamera mehr von oben
-  camPos.set(root.position.x - fx * p.camDist, 3.8 + Math.max(0, 5 - p.camDist) * 1.5, root.position.z - fz * p.camDist);
-  camLook.set(root.position.x + fx * 3, 1.6, root.position.z + fz * 3);
+  // Ist es draußen eng (Mauer oder Berg im Rücken), schaut die Kamera mehr von oben
+  const hOut = 3.8 + Math.max(0, 5 - p.camDist) * 1.5, k = p.caveK;
+  camPos.set(rx - fx * p.camDist, hOut + (1.95 - hOut) * k, rz - fz * p.camDist);
+  camLook.set(rx + fx * (3 - k), 1.6 - 0.3 * k, rz + fz * (3 - k));
   if (!p.camInit) { p.cam.position.copy(camPos); p.camInit = true; }
   p.cam.position.lerp(camPos, 1 - Math.exp(-dt * 10));
   p.cam.lookAt(camLook);
@@ -1309,7 +1322,7 @@ const BUILDS = [
   { id: 'axe', tool: true, name: 'Axt', icon: '🪓', px: -25, pz: 57, cost: { stone: 3 },
     done: 'Jetzt könnt ihr Bäume fällen: vor einen Baum stellen und zaubern. Holz gibt es nur noch vom Bäumefällen.' },
   { id: 'pickaxe', tool: true, name: 'Spitzhacke', icon: '⛏️', px: -25, pz: 63, cost: { wood: 4, stone: 4 },
-    done: 'Vor vier Bergen stehen große Felswände. Haut Block für Block Gänge und Höhlen hinein. Tief drinnen wartet ein Schatz!' },
+    done: 'Die Berge sind aus Felsblöcken! Haut unten Block für Block Höhlen und Gänge hinein. In vier Bergen wartet tief drinnen ein Schatz!' },
 ];
 const TOOLS = ['axe', 'pickaxe'];
 const built = {};
@@ -1750,21 +1763,26 @@ function updateTrees(dt) {
   }
 }
 
-// ---------- Felsmassive mit Höhlen ----------
-// Vor vier Bergen liegt eine große Felswand aus vielen Blöcken. Mit der Spitzhacke haut man Block für Block heraus
-// und gräbt richtige Gänge hinein. Irgendwo tief drinnen, nahe am Berg, ist eine Schatztruhe versteckt.
+// ---------- Berge aus Felsblöcken, Höhlen und Schätze ----------
+// Alle Berge bestehen aus Felsblöcken. Mit der Spitzhacke haut man unten Block für Block heraus,
+// der Berg darüber bleibt stehen: So gräbt man richtige Höhlen und Gänge. In vier Bergen ist tief drinnen eine Schatztruhe.
 const CAVE_PICKS = [[0, 1], [7, 1], [3, 1], [10, -1]];   // [welcher Berg, Seite: 1 = zu eurer Burg, -1 = zur roten Burg]
-const CAVES = [];   // ein Eintrag pro Felsmassiv; state: 0 = Schatz versteckt, 1 = Truhe freigelegt, 2 = geplündert
+const CAVES = [];   // ein Eintrag pro Schatz-Berg; state: 0 = Schatz versteckt, 1 = Truhe freigelegt, 2 = geplündert
 const CELL_HITS = 2;
-let treasures = 0;
+let treasures = 0, rockVer = 0;
 const chestWood = std(0x8d5a2b), chestGold = new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffa000, emissiveIntensity: 0.8, metalness: 0.5, roughness: 0.3 });
 const GEM_COLORS = [0x40c4ff, 0xff4081, 0x69f0ae, 0xffd740, 0xb388ff];
 
-CAVE_PICKS.forEach(([mi, side], n) => {
-  const m = MOUNTAINS[mi];
-  if (!m) return;
-  const M = buildMassif(scene, m, side, 1000 + n * 7919);
-  const t = M.treasure;
+MOUNTAINS.forEach((m, mi) => buildMountain(scene, m, 1000 + mi * 7919));
+setGrassHoles(MASSIFS.map((M) => M.hole));
+
+CAVE_PICKS.forEach(([mi, side]) => {
+  const M = MASSIFS[mi];
+  if (!M) return;
+  // Der Schatz liegt etwa 9 Meter tief im Berg, auf der Seite zu den Spielern
+  const t = cellInside(M, 0, side, 9);
+  t.ore = false;
+  M.treasure = t;
   // Schatztruhe mit Edelsteinen, erst zu sehen, wenn ihr Block weggehauen ist
   const open = new THREE.Group();
   const chest = new THREE.Group();
@@ -1779,20 +1797,22 @@ CAVE_PICKS.forEach(([mi, side], n) => {
     const a = (k / GEM_COLORS.length) * Math.PI * 2;
     gems.add(mesh(new THREE.OctahedronGeometry(0.16), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.2 }), Math.sin(a) * 0.75, 0.2, Math.cos(a) * 0.6));
   });
-  const glow = new THREE.PointLight(0xffc860, 6, 7, 1.5);
-  glow.position.set(0, 1.4, 0);
-  open.add(chest, gems, glow);
+  open.add(chest, gems);
   open.position.set(t.x, 0, t.z);
   open.rotation.y = side > 0 ? 0 : Math.PI;
   open.visible = false;
   scene.add(open);
-  // Wo fängt man an? Vor der Mitte der Felswand
-  const front = M.cells.reduce((best, c) => (c.j < best.j || (c.j === best.j && Math.abs(c.i - 5) < Math.abs(best.i - 5)) ? c : best), M.cells[0]);
-  const spot = { x: front.x, z: front.z + side * 2.5 };
-  CAVES.push({ M, open, lid, gems, spot, side, state: 0, hintT: 0, t: 0 });
+  const c = { M, open, lid, gems, side, state: 0, hintT: 0, t: 0 };
+  M.cave = c;
+  CAVES.push(c);
 });
 
-setGrassHoles(CAVES.map((c) => c.M.rect));
+// Fackellicht: in einer Höhle leuchtet um jeden Spieler ein warmes Licht, damit man etwas sieht
+const torches = [0, 1].map(() => {
+  const l = new THREE.PointLight(0xffb060, 0, 11, 1.2);
+  scene.add(l);
+  return l;
+});
 
 function setCaveState(c, state) {
   c.state = state;
@@ -1806,51 +1826,53 @@ const updateCavesVisible = () => {};
 // Welcher Felsblock ist direkt vor dem Spieler?
 function blockAhead(p) {
   const pos = p.root.position;
-  for (const c of CAVES) {
+  for (const M of MASSIFS) {
+    if (Math.hypot(pos.x - M.m.x, pos.z - M.m.z) > M.radius + 3) continue;
     for (const d of [0.9, 1.4, 2.0, 2.6]) {
       for (const da of [0, 0.35, -0.35]) {
         const a = p.heading + da;
-        const cell = cellAt(c.M, pos.x + Math.sin(a) * d, pos.z + Math.cos(a) * d);
-        if (cell) return { c, cell };
+        const cell = cellAt(M, pos.x + Math.sin(a) * d, pos.z + Math.cos(a) * d);
+        if (cell) return { M, cell };
       }
     }
   }
   return null;
 }
 
-function nearMassif(pos, r) {
-  return CAVES.find((c) => c.M.cells.some((cell) => cell.solid && Math.abs(cell.x - pos.x) < r && Math.abs(cell.z - pos.z) < r));
-}
+const nearMountain = (pos, r) => MASSIFS.find((M) => Math.hypot(pos.x - M.m.x, pos.z - M.m.z) < M.radius + r);
 
-function digBlock(p, c, cell) {
+function digBlock(p, M, cell) {
   cell.hits++;
   fxSfx('clink');
+  const mi = MASSIFS.indexOf(M);
   if (cell.hits < CELL_HITS) {
     fxFloat('⛏️ Klonk!', '#e0e0e0', cell);
-    crackCell(c.M, cell);
-    emit(['rk', CAVES.indexOf(c), cell.idx]);
+    crackCell(M, cell);
+    emit(['rk', mi, cell.idx]);
     return;
   }
-  digOut(c, cell);
-  emit(['rd', CAVES.indexOf(c), cell.idx]);
+  digOut(M, cell);
   fxSfx('poof');
   if (cell.ore) {
     fxFloat('✨ Kristalle!', '#b388ff', cell);
     dropItem('star', { x: cell.x, z: cell.z });
-  } else if ((c.M.dug % 2) === 1) dropItem('stone', { x: cell.x, z: cell.z });
-  if (cell === c.M.treasure) {
-    setCaveState(c, 1);
-    fxPlayerMsg(p.index, '💎 Da ist eine Schatztruhe im Fels! Lauf hin!', 4000);
-  } else if (c.state === 0 && neighbours(c.M, cell).includes(c.M.treasure)) {
+  } else if ((M.dug % 2) === 1) dropItem('stone', { x: cell.x, z: cell.z });
+  const c = M.cave;
+  if (c && cell === M.treasure) {
+    fxPlayerMsg(p.index, '💎 Da ist eine Schatztruhe im Berg! Lauf hin!', 4000);
+  } else if (c && c.state === 0 && neighbours(M, cell).includes(M.treasure)) {
     fxPlayerMsg(p.index, '✨ Hier glitzert es ganz in der Nähe … weitergraben!', 3000);
-  } else if (c.M.dug === 1) {
-    fxPlayerMsg(p.index, '⛏️ Super! Haut weiter Block für Block in den Fels. Irgendwo tief drinnen, nah am Berg, ist ein Schatz versteckt.', 5000);
+  } else if (M.dug === 1) {
+    fxPlayerMsg(p.index, c && c.state === 0
+      ? '⛏️ Super! Grabt weiter Block für Block in den Berg hinein. In diesem Berg ist tief drinnen ein Schatz versteckt!'
+      : '⛏️ Super! Grabt weiter Block für Block, der Berg darüber bleibt stehen. So entsteht eine richtige Höhle.', 5000);
   }
 }
 
-function digOut(c, cell) {
-  setCellSolid(c.M, cell, false);
-  if (cell === c.M.treasure && c.state === 0) setCaveState(c, 1);
+function digOut(M, cell) {
+  setCellSolid(M, cell, false);
+  rockVer++;
+  if (M.cave && cell === M.treasure && M.cave.state === 0) setCaveState(M.cave, 1);
 }
 
 function lootCave(p, c) {
@@ -1861,32 +1883,36 @@ function lootCave(p, c) {
   const t = c.M.treasure;
   for (const [type, dx] of [['star', -0.6], ['star', 0.6], ['life', 0], ['stone', -0.9], ['stone', 0.9]]) dropItem(type, { x: t.x + dx, z: t.z + c.side * 0.7 });
   if (treasures >= CAVES.length) fxGlobalMsg('👑 Alle Schätze gefunden! Ihr seid echte Schatzsucher! 👑', 6000);
-  else fxPlayerMsg(p.index, `💎 Schatz gefunden! Noch ${CAVES.length - treasures} Schätze sind in den anderen Felswänden versteckt.`, 4500);
+  else fxPlayerMsg(p.index, `💎 Schatz gefunden! Noch ${CAVES.length - treasures} Schätze sind in anderen Bergen versteckt.`, 4500);
 }
 
+let mountainHintT = 0;
 function updateCaves(dt) {
   if (!kid) return;
   for (const c of CAVES) {
-    c.hintT -= dt;
-    if (c.state === 1) {
-      const t = c.M.treasure;
-      const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - t.x, q.root.position.z - t.z) < 1.9);
-      if (p && c.t > 1) lootCave(p, c);
-      continue;
-    }
-    if (c.state !== 0 || built.pickaxe || c.hintT > 0) continue;
-    const p = alivePlayers().find((q) => nearMassif(q.root.position, 4) === c);
-    if (!p) continue;
-    c.hintT = 15;
-    fxPlayerMsg(p.index, '🪨 Eine große Felswand! Mit einer Spitzhacke ⛏️ könnt ihr Gänge und Höhlen hineinhauen. Baut sie in der Werkstatt oder sucht sie beim Teich.', 4500);
+    if (c.state !== 1) continue;
+    const t = c.M.treasure;
+    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - t.x, q.root.position.z - t.z) < 1.9);
+    if (p && c.t > 1) lootCave(p, c);
   }
+  if ((mountainHintT -= dt) > 0 || built.pickaxe) return;
+  const p = alivePlayers().find((q) => nearMountain(q.root.position, 2.5));
+  if (!p) return;
+  mountainHintT = 20;
+  fxPlayerMsg(p.index, '⛰️ Die Berge sind aus Felsblöcken! Mit einer Spitzhacke ⛏️ könnt ihr Höhlen hineinhauen. Baut sie in der Werkstatt oder sucht sie beim Teich.', 4500);
 }
 
 function poseCaves(dt) {
-  const ps = players.filter((p) => !p.out).map((p) => p.root.position);
+  players.forEach((p, i) => {
+    const l = torches[i];
+    if (!l) return;
+    const pos = p.root.position;
+    const want = !p.out && underRock(pos.x, pos.z) ? 9 : 0;
+    l.intensity += (want - l.intensity) * Math.min(1, dt * 4);
+    l.position.set(pos.x, 2.1, pos.z);
+  });
   for (const c of CAVES) {
     c.t += dt;
-    updateRoofs(c.M, ps);
     if (c.state !== 1) continue;
     c.gems.children.forEach((gm, k) => { gm.rotation.y += dt * 2; gm.position.y = 0.25 + Math.sin(c.t * 3 + k) * 0.08; });
   }
@@ -1908,7 +1934,7 @@ function useTool(p) {
   };
   const hit = blockAhead(p);
   if (hit) {
-    if (built.pickaxe) { swing('pickaxe', hit.cell.x, hit.cell.z); digBlock(p, hit.c, hit.cell); return true; }
+    if (built.pickaxe) { swing('pickaxe', hit.cell.x, hit.cell.z); digBlock(p, hit.M, hit.cell); return true; }
     return false;
   }
   const i = nearestTree(pos, 1.6);
@@ -1929,7 +1955,9 @@ function resetWorldStuff() {
   for (const f of fallers) scene.remove(f.outer);
   fallers.length = 0;
   for (const t of TREES) t.hits = 0;
-  for (const c of CAVES) { resetMassif(c.M); setCaveState(c, 0); }
+  for (const M of MASSIFS) resetMassif(M);
+  rockVer++;
+  for (const c of CAVES) setCaveState(c, 0);
   treasures = 0;
 }
 CAVES.forEach((c) => setCaveState(c, 0));
@@ -2007,6 +2035,16 @@ function resetGame() {
 // ================= Netzwerk: Spielstand verschicken und anwenden =================
 const r2 = (v) => Math.round(v * 100) / 100;
 
+// Gegrabene Höhlen nur schicken, wenn sich etwas geändert hat (und zur Sicherheit alle 2 Sekunden)
+let rockSentVer = -1, rockSentT = 0;
+function rockKeysForNet() {
+  const now = performance.now();
+  if (rockSentVer === rockVer && now - rockSentT < 2000) return undefined;
+  rockSentVer = rockVer;
+  rockSentT = now;
+  return MASSIFS.map(dugKey);
+}
+
 function buildSnapshot() {
   return {
     t: 's',
@@ -2025,7 +2063,8 @@ function buildSnapshot() {
     st: MATERIALS.map((m) => store[m]),
     bl: Object.keys(built).filter((k) => built[k]),
     tf: [...fallen].map(([i, f]) => [i, r2(f.dir)]),
-    cv: CAVES.map((c) => [c.state, dugKey(c.M)]),
+    cv: CAVES.map((c) => c.state),
+    rk: rockKeysForNet(),
     ts: treasures,
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     ev: netEvents.splice(0),
@@ -2090,12 +2129,11 @@ function applySnapshot(s) {
     for (const [i, dir] of now) if (!fallen.has(i)) fellTreeVisual(i, dir);
     for (const i of [...fallen.keys()]) if (!now.has(i)) regrowTree(i);
   }
-  if (s.cv) s.cv.forEach(([st, key], k) => {
-    const c = CAVES[k];
-    if (!c) return;
-    if (c.lastKey !== key) { c.lastKey = key; applyDugKey(c.M, key); }
-    if (c.state !== st) setCaveState(c, st);
+  if (s.rk) s.rk.forEach((key, k) => {
+    const M = MASSIFS[k];
+    if (M && M.lastKey !== key) { M.lastKey = key; applyDugKey(M, key); }
   });
+  if (s.cv) s.cv.forEach((st, k) => { if (CAVES[k] && CAVES[k].state !== st) setCaveState(CAVES[k], st); });
   treasures = s.ts || 0;
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
@@ -2142,7 +2180,7 @@ function applySnapshot(s) {
     if (type === 'c') { const e = remote.enemies.get(a) || remote.animals.get(a); if (e) { e.hit = 0.15; flash(e.h, 0xffffff); } }
     if (type === 'w') setWait(a, b);
     if (type === 'k') catapultSwing = 1;
-    if (type === 'rk') { const cv = CAVES[a], cell = cv && cv.M.cells[b]; if (cell && cell.solid) crackCell(cv.M, cell); }
+    if (type === 'rk') { const M = MASSIFS[a], cell = M && M.cells[b]; if (cell && cell.solid) crackCell(M, cell); }
     if (type === 'u') flyToChest({ x: a, z: b }, c);
   }
 }
@@ -2300,7 +2338,8 @@ function makeSave() {
       built: Object.keys(built).filter((k) => built[k]),
       freed: CAGE_SPOTS.map((_, i) => i).filter((i) => !cages.some((c) => c.idx === i && !c.dying)),
       stall: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => a.type),
-      caves: CAVES.map((c) => [c.state, dugKey(c.M)]),
+      caves: CAVES.map((c) => c.state),
+      rock: MASSIFS.map(dugKey),
       treasures,
     });
   }
@@ -2340,13 +2379,14 @@ function applySave(s) {
       Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'stall', prodT: PRODUCE[type][1] / 2 });
       animals.push(a);
     }
+    // Gegrabene Höhlen (ältere Spielstände hatten noch keine)
+    MASSIFS.forEach((M, k) => applyDugKey(M, typeof s.rock?.[k] === 'string' ? s.rock[k].slice(0, 200) : ''));
+    rockVer++;
     (s.caves || []).forEach((v, k) => {
       const c = CAVES[k];
       if (!c) return;
-      // ältere Spielstände hatten nur eine Zahl pro Höhle
-      const [st, key] = Array.isArray(v) ? v : [v === 2 ? 2 : 0, ''];
-      applyDugKey(c.M, typeof key === 'string' ? key.slice(0, 64) : '');
-      let state = int(st, 0, 2);
+      // ältere Spielstände: nur geplünderte Schätze zählen, die Höhlen sind dort neu
+      let state = Array.isArray(v) ? (v[0] === 2 ? 2 : 0) : Array.isArray(s.rock) ? int(v, 0, 2) : v === 2 ? 2 : 0;
       if (state === 1 && c.M.treasure.solid) state = 0;
       if (state === 0 && !c.M.treasure.solid) state = 1;
       setCaveState(c, state);

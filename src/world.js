@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked, blockers } from './util.js';
+import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
@@ -227,67 +227,17 @@ function addStall(scene) {
   addHay(scene, 18.5, 78.5);
 }
 
-// Berge: Mitte und Radius, damit man vorne an einem Berg eine Höhle hauen kann
+// Berge: nur Lage und Größe. Gebaut werden sie in rocks.js aus vielen Felsblöcken, in die man Höhlen graben kann.
 export const MOUNTAINS = [];
 
-function addMountains(scene) {
+function addMountains() {
   for (const side of [-1, 1]) {
     for (let i = 0; i < 6; i++) {
       const r = 14 + rand() * 6, h = 28 + rand() * 22;
       const x = side * (26 + i * 22), z = (rand() - 0.5) * 12;
-      const geo = new THREE.ConeGeometry(r, h, 14, 7, true);
-      const p = geo.attributes.position;
-      const colors = [];
-      const c = new THREE.Color();
-      for (let k = 0; k < p.count; k++) {
-        const vx = p.getX(k), vy = p.getY(k), vz = p.getZ(k);
-        const t = (vy + h / 2) / h, n = noise3(vx, vy, vz);
-        if (t < 0.999) {
-          const s = 1 + (n - 0.5) * 0.35;
-          p.setXYZ(k, vx * s, vy + (noise3(vz, vx, vy) - 0.5) * h * 0.04, vz * s);
-        }
-        if (t > 0.7 + n * 0.1) c.set(0xf4f6f8);
-        else if (t < 0.1) c.setHSL(0.25, 0.3, 0.25 + n * 0.05);
-        else c.setHSL(0.08, 0.06, 0.33 + n * 0.12);
-        colors.push(c.r, c.g, c.b);
-      }
-      geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-      geo.computeVertexNormals();
-      scene.add(mesh(geo, std(0xffffff, { vertexColors: true, flatShading: true }), x, h / 2, z));
-      const m = { x, z, r, prof: mountainProfile(p, h) };
-      m.radiusAt = (a) => profileAt(m.prof, a);
-      MOUNTAINS.push(m);
-      blockers.push({
-        hit: (px, pz, pr) => { const dx = px - x, dz = pz - z, d = Math.hypot(dx, dz); return d < r * 1.3 + pr && d < m.radiusAt(Math.atan2(dx, dz)) + pr; },
-        solid: (px, pz) => { const dx = px - x, dz = pz - z, d = Math.hypot(dx, dz); return d < r * 1.3 && d < m.radiusAt(Math.atan2(dx, dz)); },
-      });
+      MOUNTAINS.push({ x, z, r, h, radiusAt: () => r });
     }
   }
-}
-
-// Wie weit reicht der Berg in Bodennähe (bis Kopfhöhe) in jede Richtung? Ein Wert pro Kante des Kegels.
-const SEG = 14, ROWS = 7;
-function mountainProfile(p, h) {
-  const prof = [];
-  const at = (row, k) => p.getX(row * (SEG + 1) + k) ** 2 + p.getZ(row * (SEG + 1) + k) ** 2;
-  const f = Math.min(1, 2 / (h / ROWS));   // Anteil bis 2 m Höhe
-  for (let k = 0; k < SEG; k++) {
-    const r0 = Math.sqrt(at(ROWS, k)), r1 = Math.sqrt(at(ROWS - 1, k));
-    const i = ROWS * (SEG + 1) + k;
-    prof.push({ a: Math.atan2(p.getX(i), p.getZ(i)), r: Math.max(r0, r0 + (r1 - r0) * f) + 0.15 });
-  }
-  return prof.sort((u, v) => u.a - v.a);
-}
-function profileAt(prof, a) {
-  const n = prof.length;
-  for (let k = 0; k < n; k++) {
-    const u = prof[k], v = prof[(k + 1) % n];
-    const ua = u.a, va = k + 1 < n ? v.a : v.a + Math.PI * 2;
-    let aa = a;
-    if (aa < ua) aa += Math.PI * 2;
-    if (aa >= ua && aa <= va) return u.r + (v.r - u.r) * ((aa - ua) / (va - ua || 1));
-  }
-  return prof[0].r;
 }
 
 // Wo darf Wald wachsen und wo dürfen Tiere auftauchen?
@@ -507,7 +457,7 @@ export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5,
   addStall(scene);
   addEnemyCastle(scene);
   addVillage(scene);
-  addMountains(scene);
+  addMountains();
   addPond(scene);
   addForest(scene, low);
   mergeStatic(scene, before);
