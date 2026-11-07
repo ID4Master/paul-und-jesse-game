@@ -1,4 +1,13 @@
 import * as THREE from 'three';
+import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
+
+const f1 = (v) => v.toFixed(1);
+// Kein Gras auf den Wegen und Dorfplätzen und im See
+const EXTRA_MASK = [
+  ...PATHS.map(([x1, z1, x2, z2]) => `if (segD(p, vec2(${f1(x1)}, ${f1(z1)}), vec2(${f1(x2)}, ${f1(z2)})) < ${f1(PATH_W / 2 + 0.2)}) return 0.0;`),
+  ...VILLAGES.map((v) => `if (length(p - vec2(${f1(v.x)}, ${f1(v.z)})) < 11.0) return 0.0;`),
+  `if (length(p - vec2(${f1(LAKE.x)}, ${f1(LAKE.z)})) < ${f1(LAKE.r + 2)}) return 0.0;`,
+].join('\n  ');
 
 // Schönes Gras, das trotzdem schnell ist (Ideen aus Three.js-Grastechniken):
 // - Büschel aus schmalen, spitz zulaufenden Halmen statt einzelner Kegel
@@ -18,10 +27,16 @@ const uniforms = {
 // Hier wächst kein Gras: Weg, Werkstatt, Stall, Ablade-Fläche, Teich und die Burghöfe
 const MASK = /* glsl */ `
 uniform vec3 uRocks[16];
+float segD(vec2 p, vec2 a, vec2 b) {
+  vec2 ab = b - a;
+  float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
+  return length(p - a - ab * t);
+}
 float grassMask(vec2 p) {
   for (int i = 0; i < 16; i++) {
     if (length(p - uRocks[i].xy) < uRocks[i].z) return 0.0;
   }
+  ${EXTRA_MASK}
   if (abs(p.x) < 3.4 && p.y > -83.0 && p.y < 71.0) return 0.0;
   if (p.x > -28.3 && p.x < -9.0 && p.y > 53.0 && p.y < 67.0) return 0.0;
   if (p.x > 16.0 && p.x < 32.0 && p.y > 64.0 && p.y < 80.0) return 0.0;

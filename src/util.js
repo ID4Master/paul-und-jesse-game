@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export const WORLD = 150;
+export const WORLD = 300;   // halbe Kantenlänge der Welt (doppelt so groß wie früher)
 
 // Zufall mit festem Startwert, damit die Welt immer gleich aussieht
 let seed = 42;

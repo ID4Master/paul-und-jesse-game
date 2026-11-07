@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 import { addWallWalk } from './castlewalk.js';
+import { PATHS, PATH_W, pathDist, nearVillage } from './map.js';
 
 export const HOME = { x: 0, z: 80 };
 export const ENEMY_CASTLE = { x: 0, z: -100 };
@@ -54,7 +55,7 @@ function addTower(scene, x, z, r, h, roof) {
   circles.push({ x, z, r });
 }
 
-function addFlag(scene, x, y, z, color, size = 1) {
+export function addFlag(scene, x, y, z, color, size = 1) {
   scene.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 4 * size), std(0x5d4037), x, y + 2 * size, z));
   scene.add(mesh(new THREE.PlaneGeometry(2 * size, 1.2 * size), std(color, { side: THREE.DoubleSide }), x + size, y + 3.3 * size, z));
 }
@@ -132,7 +133,7 @@ function addEnemyCastle(scene) {
 const plaster = std(0xe8dcc0);
 const timber = std(0x4a3020);
 const glass = std(0x1d2a33, { roughness: 0.3 });
-function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
+export function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
   const h = 3.2;
   scene.add(mesh(new THREE.BoxGeometry(w, h, d), plaster, x, h / 2, z));
   // Balken an den Kanten und in der Mitte
@@ -162,7 +163,7 @@ function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
   addBox(x - w / 2, x + w / 2, z - d / 2, z + d / 2);
 }
 
-function addWell(scene, x, z) {
+export function addWell(scene, x, z) {
   scene.add(mesh(new THREE.CylinderGeometry(1, 1.05, 0.9, 16, 1, true), darkStone, x, 0.45, z));
   scene.add(mesh(new THREE.CircleGeometry(0.95, 16).rotateX(-Math.PI / 2), std(0x23465e, { roughness: 0.2 }), x, 0.5, z));
   for (const s of [-1, 1]) scene.add(mesh(new THREE.BoxGeometry(0.15, 2, 0.15), timber, x + s * 0.9, 1.4, z));
@@ -173,12 +174,12 @@ function addWell(scene, x, z) {
   circles.push({ x, z, r: 1.1 });
 }
 
-function addHay(scene, x, z) {
+export function addHay(scene, x, z) {
   scene.add(mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.2, 14), std(0xd8b85a), x, 0.6, z));
   circles.push({ x, z, r: 0.85 });
 }
 
-function addFence(scene, x1, z, x2) {
+export function addFence(scene, x1, z, x2) {
   const wood = std(0x7a5a3a);
   for (let x = x1; x <= x2; x += 1.5) scene.add(mesh(new THREE.BoxGeometry(0.12, 1, 0.12), wood, x, 0.5, z));
   for (const y of [0.4, 0.8]) scene.add(mesh(new THREE.BoxGeometry(x2 - x1, 0.08, 0.06), wood, (x1 + x2) / 2, y, z));
@@ -250,11 +251,12 @@ export const freeSpot = (x, z) =>
     (x > 10 && x < 38 && z > 56 && z < 92) ||                       // Stall
     (x > -28 && x < -6 && z > 44 && z < 72) ||                      // Werkstatt
     (Math.abs(x) < 42 && z < -38 && z > -125) ||                    // Dorf und feindliche Burg
-    Math.hypot(x - 52, z - 38) < 13);                               // Teich
+    Math.hypot(x - 52, z - 38) < 13 ||                              // Teich
+    nearVillage(x, z, 4) || pathDist(x, z) < PATH_W);               // neue Dörfer und Wege dorthin
 
 export function randomFreeSpot() {
   for (let n = 0; n < 100; n++) {
-    const x = (Math.random() - 0.5) * 260, z = (Math.random() - 0.5) * 260;
+    const x = (Math.random() - 0.5) * (WORLD * 2 - 30), z = (Math.random() - 0.5) * (WORLD * 2 - 30);
     if (freeSpot(x, z) && !blocked(x, z, 1.5)) return { x, z };
   }
   return { x: 40, z: 50 };
@@ -278,8 +280,9 @@ export function setTreeVisible(t, show) {
 
 function addForest(scene, low) {
   const trees = TREES;
-  for (let n = 0; n < 500 && trees.length < 260; n++) {
-    const x = (rand() - 0.5) * 280, z = (rand() - 0.5) * 280;
+  // Auf der großen Karte: viel Wald, aber rund um die Dörfer und auf den Wegen frei
+  for (let n = 0; n < 2000 && trees.length < 820; n++) {
+    const x = (rand() - 0.5) * (WORLD * 2 - 16), z = (rand() - 0.5) * (WORLD * 2 - 16);
     if (!freeSpot(x, z)) continue;
     const s = 0.8 + rand() * 0.6;
     const circle = { x, z, r: 0.5 * s };
@@ -434,10 +437,30 @@ export function updateWorld(dt) {
   }
 }
 
-export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5, 0.8, 0.3) } = {}) {
+// Erdwege zu den neuen Dörfern
+function addPaths(scene) {
+  const tex = dirtTex.clone();
+  tex.repeat.set(1, 1);
+  tex.needsUpdate = true;
+  const mat = std(0xffffff, { map: tex });
+  PATHS.forEach(([x1, z1, x2, z2], k) => {
+    const len = Math.hypot(x2 - x1, z2 - z1) + PATH_W;
+    const geo = new THREE.PlaneGeometry(PATH_W, len);
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * len / 5);
+    const m = mesh(geo, mat, (x1 + x2) / 2, 0.015 + k * 0.0005, (z1 + z2) / 2);
+    m.rotation.order = 'YXZ';
+    m.rotation.y = Math.atan2(x2 - x1, z2 - z1);
+    m.rotation.x = -Math.PI / 2;
+    m.castShadow = false;
+    scene.add(m);
+  });
+}
+
+export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5, 0.8, 0.3), extra = null } = {}) {
   const before = new Set(scene.children);
   addSky(scene, sunDir.clone().normalize());
-  const geo = new THREE.PlaneGeometry(WORLD * 2, WORLD * 2, 150, 150);
+  const geo = new THREE.PlaneGeometry(WORLD * 2, WORLD * 2, 200, 200);
   const colors = [];
   const c = new THREE.Color();
   for (let i = 0; i < geo.attributes.position.count; i++) {
@@ -445,7 +468,7 @@ export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5,
     colors.push(c.r, c.g, c.b);
   }
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  grassTex.repeat.set(70, 70);
+  grassTex.repeat.set(WORLD * 140 / 300, WORLD * 140 / 300);
   const ground = mesh(geo, std(0xffffff, { vertexColors: true, map: grassTex }));
   ground.rotation.x = -Math.PI / 2;
   scene.add(ground);
@@ -461,6 +484,8 @@ export function buildWorld(scene, { low = false, sunDir = new THREE.Vector3(0.5,
   addVillage(scene);
   addMountains();
   addPond(scene);
+  addPaths(scene);
+  extra?.(scene);   // die neuen Dörfer
   addForest(scene, low);
   mergeStatic(scene, before);
   makeGrassField(scene, { low });

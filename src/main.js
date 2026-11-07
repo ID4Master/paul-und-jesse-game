@@ -8,6 +8,8 @@ import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, a
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
+import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
+  villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
 
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
@@ -58,7 +60,33 @@ sun.shadow.bias = -0.0005;
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 400 });
 scene.add(sun);
 
-buildWorld(scene, { low: isTouch, sunDir: SUN_DIR });
+buildWorld(scene, { low: isTouch, sunDir: SUN_DIR, extra: buildVillages });
+
+// ================= Die drei Dörfer: Bürger, Gespräche und Rätsel =================
+const DLG_HINT = isTouch ? 'Tippe auf eine Antwort' : '◀ ▶ auswählen · Leertaste / Enter: OK';
+const talkKey = () => (isTouch ? 'den Zauber-Knopf' : 'Leertaste oder Enter');
+setupVillages(scene, {
+  msg: (i, text, ms) => fxPlayerMsg(i, text, ms),
+  float: (text, color, pos) => fxFloat(text, color, pos),
+  sfx: (name) => fxSfx(name),
+  talkKey,
+  show: (i, data) => { if (visible(i)) renderDialog(i, data, DLG_HINT); emit(['d', i, data]); },
+  reward: villageReward,
+});
+onDialogPick((i, k) => {
+  if (mode === 'client') { if (conn?.open) conn.send({ t: 'dlg', k }); }
+  else if (players[i]) pickDialog(players[i], k);
+});
+
+// Belohnung für ein gelöstes Dorfrätsel
+function villageReward(q, p, n, total) {
+  for (const pl of players) { pl.lives = Math.min(5, pl.lives + 1); pl.hp = 100; }
+  if (kid) { store.star += 3; store.soap += 2; }
+  fxGlobalMsg(`🏅 ${q.icon} ${q.name}: gelöst! (${n} von ${total}) Belohnung: +1 Leben für alle${kid ? ', ✨3 Sternenstaub und 🧼2 Seife ins Burglager' : ''}!`, 6500);
+  fxSfx('levelUp');
+  fxFloat('🏅 Gelöst!', '#ffd54f', p.root.position);
+  if (n >= total) later(7, () => { fxGlobalMsg('🎉 Alle Dorfrätsel gelöst! Ihr seid die Helden von Mühlbach, Seedorf und Hügelhausen! 🎉', 7000); fxSfx('levelUp'); });
+}
 
 // ================= Regeln =================
 const RANKS = ['Bauer', 'Ritter', 'Schmied', 'Landherr', 'König', 'Kaiser', 'Militär'];
@@ -224,7 +252,8 @@ function updateHud(p) {
     + (p.special && p.weapon !== p.special.type ? ` · ${wIcon(p.special.type)} bereit` : '');
   const xp = p.level >= MAX_LEVEL ? 'Höchster Rang erreicht!'
     : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
-  const xpLine = kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · 💎 ${treasures}/${CAVES.length} Schätze · ${xp}` : xp;
+  const xpLine = (kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · 💎 ${treasures}/${CAVES.length} Schätze · ${xp}` : xp)
+    + ` · 🏅 ${solvedCount()}/${PUZZLES.length} Dorfrätsel`;
   const toolText = [built.axe ? '🪓' : '', built.pickaxe ? '⛏️' : ''].join('');
   const packLine = kid ? `🎒 Rucksack (${packCount(p)}/${PACK_SIZE}): ${matText(p.pack) || 'leer'}${toolText ? ' · Werkzeug: ' + toolText : ''}` : '';
   const key = [hp, p.level, lives, weapon, xpLine, packLine].join('|');
@@ -652,6 +681,7 @@ function autoTarget(p, range, maxAngle) {
 }
 
 function attack(p) {
+  if (talkTo(p)) { p.cooldown = 0.3; return; }   // in der Nähe eines Bürgers: reden statt zaubern
   if (kid && useTool(p)) return;
   const W = WEAPONS[p.weapon];
   if (kid && wizard && !wizard.gone && p.root.position.distanceTo(wizard.root.position) < 14 && (p.wizHintT || 0) < performance.now()) {
@@ -754,6 +784,8 @@ function updatePlayerLogic(p, dt) {
       if (p.out) p.dead = 0.001;
       else respawn(p);
     }
+  } else if (dialogStep(p)) {
+    p.hp = Math.min(100, p.hp + dt);   // im Gespräch bleibt man stehen
   } else {
     const inp = p.input;
     p.heading += inp.turn * 2.6 * dt;
@@ -764,7 +796,8 @@ function updatePlayerLogic(p, dt) {
     }
     if (p.swapReq) swapWeapon(p);
     p.cooldown -= dt;
-    if (inp.attack && p.cooldown <= 0) attack(p);
+    if (p.holdAtk && !inp.attack) p.holdAtk = false;
+    if (inp.attack && p.cooldown <= 0 && !p.holdAtk) attack(p);
     p.hp = Math.min(100, p.hp + dt);
     if (p.special) {
       p.special.t -= dt;
@@ -826,6 +859,7 @@ function posePlayer(p, dt) {
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
   if (isTouch && p.index === me) updateAttackButton(p);
+  if (visible(p.index)) drawMinimap(p.index, players, dt);
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist.
   // In einer Höhle geht sie tief unter die Felsdecke und bleibt im Gang.
@@ -864,11 +898,12 @@ let atkKey = '';
 function updateAttackButton(p) {
   const sp = p.special && p.weapon === p.special.type ? p.special : null;
   const pct = sp ? Math.max(0, Math.round((sp.t / (sp.max || 15)) * 100)) : 100;
-  const key = wIcon(p.weapon) + pct;
+  const talk = !!nearNpc(p.root.position);
+  const key = wIcon(p.weapon) + pct + talk;
   if (key === atkKey) return;
   atkKey = key;
   const btn = $('tAttack');
-  btn.textContent = wIcon(p.weapon);
+  btn.textContent = talk ? '💬' : wIcon(p.weapon);
   btn.style.background = sp ? `conic-gradient(#ffd54fcc ${pct}%, #ffffff30 0)` : '';
 }
 
@@ -1298,7 +1333,7 @@ function spawnKidWorld() {
   spawnCages();
   if (wizard) scene.remove(wizard.root);
   wizard = makeWizardEntity();
-  for (let i = 0; i < 16; i++) spawnAnimal();
+  for (let i = 0; i < 24; i++) spawnAnimal();   // die Welt ist größer, also mehr Tiere
   spawnTools();
 }
 
@@ -2035,6 +2070,7 @@ function resetGame() {
     pending = [];
     resetBuilds();
     resetWorldStuff();
+    resetVillages(players);
     spawnKidWorld();
   }
 }
@@ -2074,6 +2110,7 @@ function buildSnapshot() {
     rk: rockKeysForNet(),
     ts: treasures,
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
+    vg: villageSnapshot(),
     ev: netEvents.splice(0),
   };
 }
@@ -2092,6 +2129,7 @@ function syncMap(map, rows, create, update, remove) {
 }
 
 function applySnapshot(s) {
+  applyVillageSnapshot(s.vg);
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
@@ -2180,6 +2218,7 @@ function applySnapshot(s) {
   for (const ev of s.ev) {
     const [type, a, b, c, d] = ev;
     if (type === 'f') floatText(scene, a, b, { x: c, z: d });
+    if (type === 'd' && visible(a)) renderDialog(a, b, DLG_HINT);
     if (type === 's') sfx[a]();
     if (type === 'm') playerMsg(a, b, c);
     if (type === 'g') showMsg('msg', a, b);
@@ -2233,11 +2272,12 @@ function startGame(newMode) {
   if (mode === 'host') players = [createPlayer(0, 'all', 'local'), createPlayer(1, 'all', 'remote')];
   if (mode === 'client') players = [createPlayer(0, 'all', 'remote'), createPlayer(1, 'all', 'local')];
   players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
+  [0, 1].forEach((i) => showMinimap(i, !!players[i] && visible(i)));
   if (mode !== 'local') players[me].hud.appendChild($('store'));
   if (isSim()) {
     spawnAllEnemies();
     if (kid) spawnKidWorld();
-    else for (let i = 0; i < 12; i++) spawnAnimal();
+    else for (let i = 0; i < 18; i++) spawnAnimal();
   }
   started = true;
   updateSitesVisible();
@@ -2252,6 +2292,7 @@ function startGame(newMode) {
     client: `Du bist Spieler 2 mit ${kid ? 'den Zauberkugeln' : 'dem Bogen'}. Helft euch gegenseitig!`,
   }[mode];
   showMsg('msg', text, 4000);
+  if (isSim()) later(16, () => fxGlobalMsg('🏘️ Neu: Drei Dörfer zum Entdecken, mit Leuten zum Reden und Rätseln! Der Weg geht zwischen eurer Burg und dem Stall los. Schaut auf die Karte oben rechts!', 7000));
   if (kid && isSim()) later(9, () => { if (!built.axe) fxGlobalMsg('Tipp: Holz gibt es nur noch vom Bäumefällen. Sucht die Axt 🪓 im Wald links neben eurer Burg!', 5000); });
 }
 
@@ -2298,6 +2339,7 @@ $('btnHost').onclick = async () => {
           const p2 = players[1];
           if (d.t === 'i') p2.input = { fwd: d.f, turn: d.u, attack: !!d.a };
           if (d.t === 'swap') p2.swapReq = true;
+          if (d.t === 'dlg') pickDialog(p2, d.k);
         });
         conn.on('close', () => { stopVoice(); players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
         setInterval(() => conn.open && conn.send(buildSnapshot()), 50);
@@ -2351,6 +2393,7 @@ function makeSave() {
       treasures,
     });
   }
+  s.villages = villageSave();
   return s;
 }
 
@@ -2402,6 +2445,7 @@ function applySave(s) {
     treasures = int(s.treasures, 0, CAVES.length);
     if (freed >= CAGE_SPOTS.length) win();
   }
+  villageLoad(s.villages);
   fxGlobalMsg('📂 Spielstand geladen! Weiter geht\'s.', 3500);
 }
 
@@ -2481,7 +2525,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -2522,6 +2566,7 @@ function step(dt) {
       updateCaves(dt);
       updateCages(dt);
       updateWizardLogic(dt);
+      updateVillages(dt, players);
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));
@@ -2542,6 +2587,7 @@ function step(dt) {
     players.forEach(spectate);
     poseBuilds(dt);
     poseCaves(dt);
+    poseVillages(dt, players);
     updateFallers(dt);
   }
   updateFrogs(dt);
