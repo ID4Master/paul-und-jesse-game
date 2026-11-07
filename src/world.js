@@ -3,6 +3,7 @@ import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
+import { addWallWalk } from './castlewalk.js';
 
 export const HOME = { x: 0, z: 80 };
 export const ENEMY_CASTLE = { x: 0, z: -100 };
@@ -74,6 +75,7 @@ function addHomeCastle(scene) {
   scene.add(keepRoof);
   addFlag(scene, cx, 13, cz, 0x1e63d6);
   addBox(cx - 3, cx + 3, cz - 3, cz + 3);
+  addWallWalk(scene, cx, cz);   // Wehrgang mit Treppe: man kann auf der Burgmauer herumlaufen
 }
 
 // Große, detaillierte feindliche Burg

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
+import { moveClimb, solidAbove, underDeck, setTowerClimb, makeTowerModel, TOWER_REL, WALK_H } from './castlewalk.js';
 import { setGrassFocus, setGrassHoles } from './grass.js';
 import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCellSolid, dugKey, applyDugKey, resetMassif, neighbours } from './rocks.js';
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS } from './world.js';
@@ -593,9 +594,10 @@ function makeProjectileMesh(kind, owner) {
 
 function shoot({ from, heading, speed, target, dmg, kind, owner, by }) {
   const m = makeProjectileMesh(kind, owner);
-  m.position.set(from.x + Math.sin(heading) * 0.8, 1.4, from.z + Math.cos(heading) * 0.8);
+  const y0 = from.y || 0;   // von der Burgmauer aus fliegt der Schuss über die Zinnen
+  m.position.set(from.x + Math.sin(heading) * 0.8, 1.4 + y0, from.z + Math.cos(heading) * 0.8);
   projectiles.push({ id: nextId++, m, kind, vel: new THREE.Vector3(Math.sin(heading) * speed, 0, Math.cos(heading) * speed),
-                     speed, target, dmg, owner, by, life: 1.6 });
+                     speed, target, dmg, owner, by, life: 1.6, high: y0 > 1 ? 3 : 0, sx: from.x, sz: from.z });
 }
 
 const tmpV = new THREE.Vector3();
@@ -610,7 +612,8 @@ function updateProjectiles(dt) {
     pos.addScaledVector(pr.vel, dt);
     pr.m.lookAt(tmpV.copy(pos).add(pr.vel));
     pr.life -= dt;
-    let done = pr.life <= 0 || pos.y < 0 || (pos.y < 7 && solidAt(pos.x, pos.z));
+    const overWall = pr.high && Math.hypot(pos.x - pr.sx, pos.z - pr.sz) < pr.high;
+    let done = pr.life <= 0 || pos.y < 0 || (pos.y < 7 && !overWall && solidAt(pos.x, pos.z));
     if (!done && pr.owner === 'player') {
       for (const c of targets()) {
         const cp = c.root.position;
@@ -625,7 +628,7 @@ function updateProjectiles(dt) {
     if (!done && pr.owner === 'enemy') {
       for (const p of alivePlayers()) {
         const pp = p.root.position;
-        if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < 0.8 && pos.y < 2.4) { hurtPlayer(p, pr.dmg); done = true; break; }
+        if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < 0.8 && pos.y < pp.y + 2.4 && pos.y > pp.y) { hurtPlayer(p, pr.dmg); done = true; break; }
       }
     }
     if (done) { scene.remove(pr.m); projectiles.splice(projectiles.indexOf(pr), 1); }
@@ -672,7 +675,7 @@ function attack(p) {
     for (const c of targets()) {
       const dx = c.root.position.x - pos.x, dz = c.root.position.z - pos.z;
       const dist = Math.hypot(dx, dz);
-      if (dist < W.range && (dx * fx + dz * fz) / dist > W.cone) hitCreature(c, p, W.dmg + p.level * 2, fx * 1.2, fz * 1.2);
+      if (dist < W.range && pos.y < 1.5 && (dx * fx + dz * fz) / dist > W.cone) hitCreature(c, p, W.dmg + p.level * 2, fx * 1.2, fz * 1.2);
     }
   } else {
     fxSfx(W.projectile === 'arrow' ? snd('bow', 'magic') : snd('gun', 'bubble'));
@@ -756,7 +759,7 @@ function updatePlayerLogic(p, dt) {
     p.heading += inp.turn * 2.6 * dt;
     const speed = inp.fwd > 0 ? inp.fwd * 9 : inp.fwd * 5;
     if (Math.abs(speed) > 0.1) {
-      move(root, Math.sin(p.heading) * speed * dt, Math.cos(p.heading) * speed * dt, 0.5);
+      moveClimb(root, Math.sin(p.heading) * speed * dt, Math.cos(p.heading) * speed * dt);   // auch Treppen, Wehrgang, Turm
       p.moving = speed > 0 ? 1 : -1;
     }
     if (p.swapReq) swapWeapon(p);
@@ -831,6 +834,7 @@ function posePlayer(p, dt) {
   const inCave = underRock(rx, rz);
   p.caveK = (p.caveK || 0) + ((inCave ? 1 : 0) - (p.caveK || 0)) * Math.min(1, dt * 5);
   let wantDist = 7;
+  const py = root.position.y;   // oben auf Mauer oder Turm stören die Mauern darunter die Kamera nicht
   if (inCave) {
     wantDist = 4.5;
     for (let d = 0.4; d <= 4.5; d += 0.25) {
@@ -839,14 +843,17 @@ function posePlayer(p, dt) {
     }
   } else {
     for (let d = 1; d <= 7; d += 0.5) {
-      if (solidAt(rx - fx * d, rz - fz * d)) { wantDist = Math.max(1.5, d - 1); break; }
+      const bx = rx - fx * d, bz = rz - fz * d;
+      if (py < 1 ? solidAt(bx, bz) : solidAbove(bx, bz, py + 1)) { wantDist = Math.max(1.5, d - 1); break; }
     }
   }
   p.camDist += (wantDist - p.camDist) * Math.min(1, dt * (wantDist < p.camDist ? 10 : 3));
   // Ist es draußen eng (Mauer oder Berg im Rücken), schaut die Kamera mehr von oben
   const hOut = 3.8 + Math.max(0, 5 - p.camDist) * 1.5, k = p.caveK;
-  camPos.set(rx - fx * p.camDist, hOut + (1.95 - hOut) * k, rz - fz * p.camDist);
-  camLook.set(rx + fx * (3 - k), 1.6 - 0.3 * k, rz + fz * (3 - k));
+  camPos.set(rx - fx * p.camDist, py + hOut + (1.95 - hOut) * k, rz - fz * p.camDist);
+  camLook.set(rx + fx * (3 - k), py + 1.6 - 0.3 * k, rz + fz * (3 - k));
+  // Unten im Burghof: Kamera unter dem Wehrgang bleiben lassen, sonst sieht man nur Bretter
+  if (py < 1 && underDeck(camPos.x, camPos.z)) camPos.y = Math.min(camPos.y, WALK_H - 0.9);
   if (!p.camInit) { p.cam.position.copy(camPos); p.camInit = true; }
   p.cam.position.lerp(camPos, 1 - Math.exp(-dt * 10));
   p.cam.lookAt(camLook);
@@ -963,7 +970,7 @@ function updateEnemyLogic(e, dt) {
         e.wind -= dt;
         if (e.wind <= 0) {
           e.strike = 0.15;
-          if (dist < 2.8) hurtPlayer(t, 8);
+          if (dist < 2.8 && t.root.position.y < 1.5) hurtPlayer(t, 8);   // oben auf der Mauer ist man sicher
           e.backoff = 0.5;
         }
       } else if (e.dodge > 0) {
@@ -1316,8 +1323,8 @@ const BUILDS = [
     done: 'Am Heilbrunnen in der Burg bekommt ihr schnell wieder Energie.' },
   { id: 'garden', name: 'Apfelgarten', icon: '🌳', px: -19, pz: 63, x: -6, z: 86, cost: { wood: 3, stone: 2 },
     done: 'Im Apfelgarten in der Burg wachsen jetzt Äpfel für eure Tiere.' },
-  { id: 'tower', name: 'Festturm', icon: '🏰', px: -13, pz: 63, x: 6, z: 86, cost: { stone: 6, wood: 2, star: 3 },
-    done: 'Eure Burg ist jetzt die schönste im Land! Jeder bekommt ein Extra-Leben.' },
+  { id: 'tower', name: 'Festturm', icon: '🏰', px: -13, pz: 63, x: HOME.x + TOWER_REL.x, z: HOME.z + TOWER_REL.z, cost: { stone: 6, wood: 2, star: 3 },
+    done: 'Eure Burg ist jetzt die schönste im Land! Jeder bekommt ein Extra-Leben. Lauft die Treppe hoch auf die Burgmauer, dann die Wendeltreppe rauf bis ganz oben auf den Turm!' },
   // Werkzeuge: kann man bauen oder irgendwo in der Welt finden
   { id: 'axe', tool: true, name: 'Axt', icon: '🪓', px: -25, pz: 57, cost: { stone: 3 },
     done: 'Jetzt könnt ihr Bäume fällen: vor einen Baum stellen und zaubern. Holz gibt es nur noch vom Bäumefällen.' },
@@ -1459,11 +1466,10 @@ function makeBuildModel(id) {
     }
   }
   if (id === 'tower') {
-    g.add(mesh(new THREE.CylinderGeometry(1.4, 1.6, 12, 18), stoneM, 0, 6, 0));
-    g.add(mesh(new THREE.ConeGeometry(1.9, 3, 18), std(0xd4af37, { metalness: 0.6, roughness: 0.3 }), 0, 13.5, 0));
-    g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 3), std(0x5d4037), 0, 16.5, 0));
-    g.add(mesh(new THREE.PlaneGeometry(1.8, 1.1), new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffb300, emissiveIntensity: 0.6, side: THREE.DoubleSide }), 0.9, 17.4, 0));
-    circles.push({ x: 6, z: 86, r: 1.6 });
+    // Mit Wendeltreppe außen herum und Plattform oben (siehe castlewalk.js)
+    g.add(makeTowerModel());
+    circles.push({ x: HOME.x + TOWER_REL.x, z: HOME.z + TOWER_REL.z, r: 1.5 });
+    setTowerClimb(true);
   }
   return g;
 }
@@ -1645,7 +1651,8 @@ function resetBuilds() {
     if (s.model) { scene.remove(s.model); s.model = null; }
     built[s.b.id] = false;
   }
-  for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === 6 && c.z === 86)) circles.splice(circles.indexOf(c), 1);
+  for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === HOME.x + TOWER_REL.x && c.z === HOME.z + TOWER_REL.z)) circles.splice(circles.indexOf(c), 1);
+  setTowerClimb(false);
   for (const b of bigBubbles) scene.remove(b.m);
   bigBubbles.length = 0;
   updateSitesVisible();
@@ -2050,7 +2057,7 @@ function buildSnapshot() {
     t: 's',
     p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
       p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
-      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow]),
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow, r2(p.root.position.y)]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
     a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
@@ -2088,11 +2095,11 @@ function applySnapshot(s) {
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
-    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack, tool] = row;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack, tool, y] = row;
     p.apples = apples || 0;
     p.toolShow = tool || '';
     if (pack) MATERIALS.forEach((m, k) => (p.pack[m] = pack[k]));
-    p.tx = x; p.tz = z;
+    p.tx = x; p.tz = z; p.ty = y || 0;
     p.heading = heading; p.bodyYaw = bodyYaw;
     p.hp = hp; p.lives = lives; p.kills = kills; p.out = !!out; p.moving = moving;
     if (dead > 0 && !p.dead) p.h.body.rotation.x = 0;
@@ -2193,6 +2200,7 @@ function smoothRemote(dt) {
     if (Math.abs(o.tx - o.root.position.x) + Math.abs(o.tz - o.root.position.z) > 10) { o.root.position.x = o.tx; o.root.position.z = o.tz; return; }
     o.root.position.x += (o.tx - o.root.position.x) * k;
     o.root.position.z += (o.tz - o.root.position.z) * k;
+    if (o.ty !== undefined) o.root.position.y += (o.ty - o.root.position.y) * k;
   };
   players.forEach(glide);
   remote.enemies.forEach(glide);
