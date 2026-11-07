@@ -30,6 +30,8 @@ export const angleDiff = (a, b) => {
 // ---------- Hindernisse ----------
 export const circles = [];
 export const boxes = [];
+// Weitere Hindernisse mit eigener Form (Berge, Felsmassive): { hit(x, z, r), solid(x, z) }
+export const blockers = [];
 
 export function blocked(x, z, r) {
   if (Math.abs(x) > WORLD - 2 || Math.abs(z) > WORLD - 2) return true;
@@ -40,6 +42,7 @@ export function blocked(x, z, r) {
   for (const b of boxes) {
     if (x + r > b.x1 && x - r < b.x2 && z + r > b.z1 && z - r < b.z2) return true;
   }
+  for (const b of blockers) if (b.hit(x, z, r)) return true;
   return false;
 }
 
@@ -55,6 +58,7 @@ export function solidAt(x, z) {
     const dx = x - c.x, dz = z - c.z;
     if (dx * dx + dz * dz < c.r * c.r) return true;
   }
+  for (const b of blockers) if (b.solid(x, z)) return true;
   return false;
 }
 

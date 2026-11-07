@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
+import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked, blockers } from './util.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
@@ -254,10 +254,40 @@ function addMountains(scene) {
       geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       geo.computeVertexNormals();
       scene.add(mesh(geo, std(0xffffff, { vertexColors: true, flatShading: true }), x, h / 2, z));
-      circles.push({ x, z, r: r * 0.9 });
-      MOUNTAINS.push({ x, z, r });
+      const m = { x, z, r, prof: mountainProfile(p, h) };
+      m.radiusAt = (a) => profileAt(m.prof, a);
+      MOUNTAINS.push(m);
+      blockers.push({
+        hit: (px, pz, pr) => { const dx = px - x, dz = pz - z, d = Math.hypot(dx, dz); return d < r * 1.3 + pr && d < m.radiusAt(Math.atan2(dx, dz)) + pr; },
+        solid: (px, pz) => { const dx = px - x, dz = pz - z, d = Math.hypot(dx, dz); return d < r * 1.3 && d < m.radiusAt(Math.atan2(dx, dz)); },
+      });
     }
   }
+}
+
+// Wie weit reicht der Berg in Bodennähe (bis Kopfhöhe) in jede Richtung? Ein Wert pro Kante des Kegels.
+const SEG = 14, ROWS = 7;
+function mountainProfile(p, h) {
+  const prof = [];
+  const at = (row, k) => p.getX(row * (SEG + 1) + k) ** 2 + p.getZ(row * (SEG + 1) + k) ** 2;
+  const f = Math.min(1, 2 / (h / ROWS));   // Anteil bis 2 m Höhe
+  for (let k = 0; k < SEG; k++) {
+    const r0 = Math.sqrt(at(ROWS, k)), r1 = Math.sqrt(at(ROWS - 1, k));
+    const i = ROWS * (SEG + 1) + k;
+    prof.push({ a: Math.atan2(p.getX(i), p.getZ(i)), r: Math.max(r0, r0 + (r1 - r0) * f) + 0.15 });
+  }
+  return prof.sort((u, v) => u.a - v.a);
+}
+function profileAt(prof, a) {
+  const n = prof.length;
+  for (let k = 0; k < n; k++) {
+    const u = prof[k], v = prof[(k + 1) % n];
+    const ua = u.a, va = k + 1 < n ? v.a : v.a + Math.PI * 2;
+    let aa = a;
+    if (aa < ua) aa += Math.PI * 2;
+    if (aa >= ua && aa <= va) return u.r + (v.r - u.r) * ((aa - ua) / (va - ua || 1));
+  }
+  return prof[0].r;
 }
 
 // Wo darf Wald wachsen und wo dürfen Tiere auftauchen?
@@ -277,6 +307,9 @@ export function randomFreeSpot() {
   }
   return { x: 40, z: 50 };
 }
+
+// Alle Steine (damit Felsmassive darunter liegende Steine wegräumen können)
+export const ROCKS = [];
 
 // Alle Bäume, damit man sie mit der Axt fällen kann (und sie später nachwachsen)
 export const TREES = [];
@@ -346,7 +379,7 @@ function addForest(scene, low) {
   });
   [oakTrunks, ...crowns].forEach(finish);
 
-  const rocks = [];
+  const rocks = ROCKS;
   for (let n = 0; n < 200 && rocks.length < 70; n++) {
     const x = (rand() - 0.5) * 280, z = (rand() - 0.5) * 280;
     if (freeSpot(x, z)) rocks.push({ x, z, s: 0.3 + rand() * 1.0 });
@@ -356,7 +389,9 @@ function addForest(scene, low) {
     q.setFromAxisAngle(up, rand() * 6.28);
     sc.set(r.s * (0.8 + rand() * 0.5), r.s * (0.5 + rand() * 0.3), r.s * (0.8 + rand() * 0.5));
     rockMesh.setMatrixAt(i, m4.compose(pos.set(r.x, r.s * 0.2, r.z), q, sc));
-    if (r.s > 0.6) circles.push({ x: r.x, z: r.z, r: r.s * 0.9 });
+    // Kollision so groß wie der Stein wirklich ist (vorher konnte man durch Steine laufen)
+    if (r.s > 0.4) { r.circle = { x: r.x, z: r.z, r: Math.max(sc.x, sc.z) * 0.85 }; circles.push(r.circle); }
+    Object.assign(r, { im: rockMesh, i });
   });
   finish(rockMesh);
 

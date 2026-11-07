@@ -12,11 +12,17 @@ const uniforms = {
   uTime: { value: 0 },
   uFocus: { value: new THREE.Vector2(0, 60) },
   uRadius: { value: 30 },
+  uRocks: { value: [0, 1, 2, 3, 4, 5, 6, 7].map(() => new THREE.Vector4(0, 0, 0, 0)) },   // Felsmassive: kein Gras (x1, z1, x2, z2)
 };
 
 // Hier wächst kein Gras: Weg, Werkstatt, Stall, Ablade-Fläche, Teich und die Burghöfe
 const MASK = /* glsl */ `
+uniform vec4 uRocks[8];
 float grassMask(vec2 p) {
+  for (int i = 0; i < 8; i++) {
+    vec4 r = uRocks[i];
+    if (p.x > r.x && p.x < r.z && p.y > r.y && p.y < r.w) return 0.0;
+  }
   if (abs(p.x) < 3.4 && p.y > -83.0 && p.y < 71.0) return 0.0;
   if (p.x > -28.3 && p.x < -9.0 && p.y > 53.0 && p.y < 67.0) return 0.0;
   if (p.x > 16.0 && p.x < 32.0 && p.y > 64.0 && p.y < 80.0) return 0.0;
@@ -204,6 +210,11 @@ export function updateGrass(dt) {
 }
 
 // Vor jedem Bild: Gras um diese Stelle herum zeigen
+// Unter Felsmassiven (und in gegrabenen Gängen) wächst kein Gras
+export function setGrassHoles(rects) {
+  rects.slice(0, 8).forEach((r, i) => uniforms.uRocks.value[i].set(r.x1, r.z1, r.x2, r.z2));
+}
+
 export function setGrassFocus(x, z) {
   uniforms.uFocus.value.set(x, z);
 }

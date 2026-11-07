@@ -50,7 +50,7 @@ Bauer → Ritter → Schmied → Landherr → König → Kaiser → Militär
     - 🪓 Axt (🪨3) und ⛏️ Spitzhacke (🪵4 🪨4): Werkzeuge, die allen Spielern gehören
   - Holz gibt es nur noch vom Bäumefällen: mit der Axt vor einen Baum stellen und 3× zaubern, der Baum fällt um und lässt 2 🪵 fallen. Nach gut 2 Minuten wächst er nach
   - Die Axt liegt auch im Wald links neben eurer Burg, die Spitzhacke beim Teich (finden oder bauen)
-  - Höhlen: An vier Bergen ist ein Felsen mit Rissen. Mit der Spitzhacke 5× draufhauen, dann ist da eine Höhle mit Schatztruhe (✨✨, goldenes Herz, Steine). Anzeige 💎 Schätze x/4
+  - Höhlen: Vor vier Bergen steht eine große Felswand aus vielen Felsblöcken. Mit der Spitzhacke haut man jeden Block mit 2 Schlägen heraus und gräbt so eigene Gänge und Höhlen (die Decke bleibt, wird aber durchsichtig, wenn man drin ist). Blöcke mit bunten Kristallen geben Sternenstaub, sonst gibt es ab und zu Steine. Tief drinnen nahe am Berg ist in jeder Felswand eine Schatztruhe versteckt (✨✨, goldenes Herz, Steine). Anzeige 💎 Schätze x/4
   - Den Zauberer kann man nicht direkt besiegen: wenn alle 6 Tiere frei sind, wird er zum Frosch
 - Spielstand speichern:
   - Knopf „💾 Speichern“ oben rechts: lädt eine Datei `Knights-Spielstand_….json` in den Download-Ordner
