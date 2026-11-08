@@ -124,10 +124,9 @@ const WEAPONS = {
   gun:       { name: 'Maschinengewehr', icon: '💥', melee: false, dmg: 5, cd: 0.1, speed: 60, projectile: 'bullet', special: true },
 };
 
-// ================= Kinderfreundlich (Schalter im Startmenü) =================
+// ================= Kinderfreundlich (immer an, die Ritter-Version gibt es nicht mehr) =================
 // Gleiches Spiel, aber Zauberstab statt Waffen, Schelme werden verzaubert, Tiere werden Freunde.
-let kid = true;
-try { kid = localStorage.getItem('kic-kid') !== '0'; } catch { /* ohne Speicher bleibt es an */ }
+const kid = true;
 const KID = {
   fork:      { name: 'Zauberstab', icon: '🪄', model: 'wand' },
   bow:       { name: 'Zauberkugeln', icon: '✨', model: 'orbwand' },
@@ -2329,22 +2328,8 @@ function startGame(newMode) {
 }
 
 // ================= Startmenü =================
-const KID_TEXT = {
-  on: ['Befreit die Tiere vom bösen Zauberer!', 'Zähmt Tiere mit Äpfeln und bringt sie in euren Stall: Kühe geben Milch, Hühner legen Eier. Zauberstab statt Waffen.'],
-  off: ['Vom Bauern zum Kaiser: erobert die rote Burg!', 'Ritter mit Mistgabel, Bogen, Feuerschwert und Maschinengewehr. Eher für ältere Kinder.'],
-};
-function showKidSetting() {
-  $('kidToggle').checked = kid;
-  const [sub, hint] = KID_TEXT[kid ? 'on' : 'off'];
-  $('menuSub').textContent = sub;
-  $('kidHint').textContent = hint;
-}
-$('kidToggle').onchange = () => {
-  kid = $('kidToggle').checked;
-  try { localStorage.setItem('kic-kid', kid ? '1' : '0'); } catch { /* egal */ }
-  showKidSetting();
-};
-showKidSetting();
+$('menuSub').textContent = 'Befreit die Tiere vom bösen Zauberer!';
+$('kidHint').textContent = 'Zähmt Tiere mit Äpfeln und bringt sie in euren Stall: Kühe geben Milch, Hühner legen Eier. Zauberstab statt Waffen.';
 
 $('btnSingle').onclick = () => { initAudio(); startGame('single'); };
 $('btnLocal').onclick = () => { initAudio(); startGame('local'); };
@@ -2392,7 +2377,7 @@ $('btnJoin').onclick = async () => {
       onOpen: (c) => {
         conn = c;
         conn.on('data', (d) => {
-          if (d.t === 'cfg') { kid = d.kid; startGame('client'); startVoice(peer, conn.peer, false); }
+          if (d.t === 'cfg') { startGame('client'); startVoice(peer, conn.peer, false); }
           if (d.t === 's' && started) applySnapshot(d);
         });
         conn.on('close', () => { stopVoice(); showMsg('msg', 'Die Verbindung ist weg. Über ☰ Menü neu starten.', 6000); });
@@ -2522,14 +2507,12 @@ function saveSummary(s) {
   const when = isNaN(d) ? '' : `${d.toLocaleDateString('de-DE')} um ${d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
   const lvl = Math.max(...s.players.map((p) => int(p.level, 0, MAX_LEVEL))) + 1;
   const parts = [`${s.players.length === 1 ? '1 Spieler' : '2 Spieler'}`, `Level ${lvl}`];
-  if (s.kid) parts.push(`🐾 ${(s.freed || []).length} befreit`, `💎 ${s.treasures || 0} Schätze`);
-  return `Gespeichert am ${when} · ${parts.join(' · ')}${s.kid ? '' : ' · Ritter-Version'}`;
+  parts.push(`🐾 ${(s.freed || []).length} befreit`, `💎 ${s.treasures || 0} Schätze`);
+  return `Gespeichert am ${when} · ${parts.join(' · ')}`;
 }
 
 function continueFrom(s) {
   initAudio();
-  kid = !!s.kid;
-  showKidSetting();
   startGame(s.players.length >= 2 && !isTouch ? 'local' : 'single');
   applySave(s);
 }
