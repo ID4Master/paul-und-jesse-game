@@ -19,6 +19,8 @@ export const PUZZLES = [
   { id: 'riddles', name: 'Oma Rosis Rätsel', icon: '🧠' },
   { id: 'chickens', name: 'Friedas Hühner', icon: '🐔' },
 ];
+// Wer gibt welches Rätsel? Über dieser Person schwebt ein ❓, solange das Rätsel offen ist.
+const GIVER = { berta: 'cake', knut: 'colors', rosi: 'riddles', frieda: 'chickens' };
 
 const PEN = { x1: H.x + 18, x2: H.x + 28, z1: H.z + 2, z2: H.z + 10, gate1: H.z + 4.5, gate2: H.z + 7.5 };
 const inPen = (x, z) => x > PEN.x1 + 0.5 && x < PEN.x2 - 0.5 && z > PEN.z1 + 0.5 && z < PEN.z2 - 0.5;
@@ -185,7 +187,7 @@ const page = (text, choices = [['Tschüss 👋']]) => ({ text, choices });
 const more = (text, next) => page(text, [['Weiter ▶', next]]);
 const others = (id) => VILLAGES.filter((v) => v.id !== id).map((v) => `${v.name} liegt ${v.dir}`).join('. ') + '.';
 const directions = (id, hello) => page(hello, [
-  ['Wo sind die anderen Dörfer?', () => page(`${others(id)} Auf der kleinen Karte oben rechts siehst du alle Dörfer als 🏘️.`)],
+  ['Wo sind die anderen Dörfer?', () => page(`${others(id)} Auf der kleinen Karte oben rechts siehst du alle Dörfer als 🏘️, und ein ❓ zeigt dir, wo noch ein Rätsel auf dich wartet.`)],
   ['Tschüss 👋'],
 ]);
 
@@ -335,6 +337,34 @@ function nameSprite(text) {
   return sp;
 }
 
+// Goldenes Fragezeichen, das über der Person schwebt
+let questTex = null;
+function questSprite() {
+  if (!questTex) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#ffd54f';
+    ctx.strokeStyle = '#5d4037';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(64, 64, 54, 0, 7);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#4e2a10';
+    ctx.font = 'bold 92px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', 64, 70);
+    questTex = new THREE.CanvasTexture(cv);
+    questTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: questTex, transparent: true, fog: false }));
+  sp.scale.set(0.95, 0.95, 1);
+  sp.renderOrder = 8;
+  return sp;
+}
+
 function freeAround(x, z) {
   for (let r = 0; r < 14; r += 0.75) {
     for (let a = 0; a < 6.28; a += 0.4) {
@@ -360,7 +390,13 @@ export function setupVillages(scene, a) {
     h.root.add(label);
     scene.add(h.root);
     circles.push({ x, z, r: 0.45 });
-    npcs.push({ id, name, h, root: h.root, face, yaw: face, label, phase: Math.random() * 6 });
+    const n = { id, name, h, root: h.root, face, yaw: face, label, phase: Math.random() * 6 };
+    if (GIVER[id]) {
+      n.quest = GIVER[id];
+      n.mark = questSprite();
+      h.root.add(n.mark);
+    }
+    npcs.push(n);
   }
 
   // Windmühlenflügel
@@ -550,7 +586,7 @@ const onPlate = {};
 function updatePlates(players) {
   if (st.solved.colors) return;
   for (const p of players) {
-    if (p.dead > 0 || p.out) continue;
+    if (p.dead > 0 || p.out || p.root.position.y > 1) continue;
     const pos = p.root.position;
     const k = PLATES.findIndex((pl) => Math.hypot(pos.x - pl.x, pos.z - pl.z) < 1.35);
     if (k === onPlate[p.index]) continue;
@@ -605,7 +641,7 @@ function updateChickens(dt, players) {
       }
     }
     if (c.state === 'wild') {
-      const p = players.find((q) => !(q.dead > 0) && !q.out && Math.hypot(q.root.position.x - pos.x, q.root.position.z - pos.z) < 2.6);
+      const p = players.find((q) => !(q.dead > 0) && !q.out && q.root.position.y < 1.5 && Math.hypot(q.root.position.x - pos.x, q.root.position.z - pos.z) < 2.6);
       if (p) {
         c.state = 'follow'; c.who = p.index;
         api.sfx('pickup');
@@ -651,6 +687,12 @@ export function poseVillages(dt, players) {
     n.yaw += diff * Math.min(1, dt * 5);
     n.root.rotation.y = n.yaw;
     n.label.visible = !!near;
+    if (n.mark) {
+      // schwebt und dreht sich ein bisschen, weg sobald das Rätsel gelöst ist
+      n.mark.visible = !st.solved[n.quest];
+      n.mark.position.y = (n.label.visible ? 3.25 : 2.75) + Math.sin(time * 2.5 + n.phase) * 0.12;
+      n.mark.material.rotation = Math.sin(time * 1.8 + n.phase) * 0.15;
+    }
     const wave = near && nd < 3.2 ? Math.sin(time * 6 + n.phase) * 0.35 - 2.4 : -0.15 + Math.sin(time * 1.5 + n.phase) * 0.05;
     animateHuman(n.h, 0, false, wave, -0.15);
   }
@@ -777,7 +819,7 @@ const mapEls = [0, 1].map((i) => {
   return cv;
 });
 const mapT = [0, 0];
-export function drawMinimap(i, players, dt) {
+export function drawMinimap(i, players, dt, extra = []) {
   if ((mapT[i] -= dt) > 0) return;
   mapT[i] = 0.15;
   if (!mapBase) mapBase = drawMapBase();
@@ -785,6 +827,40 @@ export function drawMinimap(i, players, dt) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(mapBase, 0, 0);
   ctx.scale(2, 2);
+  // offene Rätsel: ein ❓ dort, wo man das Rätsel bekommt (gelöste verschwinden)
+  const marks = npcs.filter((n) => n.quest && !st.solved[n.quest]).map((n) => toMap(n.root.position.x, n.root.position.z));
+  for (let it = 0; it < 4; it++) {   // dicht beieinander? etwas auseinanderschieben
+    for (let a = 0; a < marks.length; a++) for (let b = a + 1; b < marks.length; b++) {
+      const dx = marks[b][0] - marks[a][0], dy = marks[b][1] - marks[a][1], d = Math.hypot(dx, dy) || 0.01;
+      if (d >= 10) continue;
+      const push = (10 - d) / 2;
+      marks[a] = [marks[a][0] - (dx / d) * push, marks[a][1] - (dy / d) * push];
+      marks[b] = [marks[b][0] + (dx / d) * push, marks[b][1] + (dy / d) * push];
+    }
+  }
+  const pulse = 4.6 + Math.sin(time * 5) * 0.7;
+  ctx.textBaseline = 'middle';
+  for (const [x, y] of marks) {
+    ctx.fillStyle = '#ffd54f';
+    ctx.strokeStyle = '#3e2723';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(x, y, pulse, 0, 7);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#3e2723';
+    ctx.font = 'bold 8px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('?', x, y + 0.5);
+  }
+  ctx.font = '11px system-ui, sans-serif';
+  for (const m of extra) ctx.fillText(m.icon, ...toMap(m.x, m.z).map((v, k) => v + (k ? -9 : 9)));
+  ctx.textBaseline = 'alphabetic';
+  // gelöste Dörfer bekommen einen Stern
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  const done = { muehle: st.solved.cake, see: st.solved.colors, huegel: st.solved.riddles && st.solved.chickens };
+  for (const v of VILLAGES) if (done[v.id]) ctx.fillText('⭐', toMap(v.x, v.z)[0] + 9, toMap(v.x, v.z)[1] - 8);
+  // Spieler zuletzt, damit sie über allem liegen
   for (const p of players) {
     if (p.out) continue;
     const [x, y] = toMap(p.root.position.x, p.root.position.z);
@@ -799,10 +875,5 @@ export function drawMinimap(i, players, dt) {
     ctx.fill(); ctx.stroke();
     ctx.restore();
   }
-  // gelöste Dörfer bekommen einen Stern
-  ctx.font = '10px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  const done = { muehle: st.solved.cake, see: st.solved.colors, huegel: st.solved.riddles && st.solved.chickens };
-  for (const v of VILLAGES) if (done[v.id]) ctx.fillText('⭐', toMap(v.x, v.z)[0] + 9, toMap(v.x, v.z)[1] - 8);
 }
 export const showMinimap = (i, on) => (mapEls[i].style.display = on ? 'block' : 'none');

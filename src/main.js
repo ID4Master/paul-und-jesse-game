@@ -10,6 +10,8 @@ import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
   villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
+import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRider, riderCamera, dragonMapMarks, dragonSnapshot, applyDragonSnapshot,
+  resetDragons, dragonDebug } from './dragon.js';
 
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
@@ -73,6 +75,25 @@ setupVillages(scene, {
   show: (i, data) => { if (visible(i)) renderDialog(i, data, DLG_HINT); emit(['d', i, data]); },
   reward: villageReward,
 });
+// ================= Drachen: nach allen Dorfrätseln vom Festturm aus fliegen =================
+initDragons(scene, {
+  msg: (i, text, ms) => fxPlayerMsg(i, text, ms),
+  gmsg: (text, ms) => fxGlobalMsg(text, ms),
+  float: (text, color, pos) => fxFloat(text, color, pos),
+  sfx: (name) => fxSfx(name),
+  later: (t, fn) => later(t, fn),
+  talkKey,
+  kid: () => kid,
+  solvedAll: () => solvedCount() >= PUZZLES.length,
+  missing: () => PUZZLES.length - solvedCount(),
+  towerBuilt: () => !!built.tower,
+  flyHelp: (p) => {
+    if (isTouch && (mode !== 'local')) return 'Joystick hoch/runter: höher/tiefer, links/rechts: lenken. 💬-Knopf: landen, 🔄: Feuer!';
+    const k = p.keymap === KEYMAPS.p2 ? ['Pfeil hoch/runter', 'Pfeil links/rechts', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W/S', 'A/D', 'Leertaste', 'Q'] : ['W/S oder Pfeile', 'A/D oder Pfeile', 'Leertaste/Enter', 'Q'];
+    return `${k[0]}: höher/tiefer, ${k[1]}: lenken, ${k[2]}: landen, ${k[3]}: Feuer!`;
+  },
+});
+
 onDialogPick((i, k) => {
   if (mode === 'client') { if (conn?.open) conn.send({ t: 'dlg', k }); }
   else if (players[i]) pickDialog(players[i], k);
@@ -229,6 +250,7 @@ function resetPlayer(p) {
 }
 
 function respawn(p) {
+  p.riding = null;
   p.root.position.set(HOME.x + p.startX, 0, HOME.z - 16);
   p.root.visible = true;
   p.h.body.rotation.x = 0;
@@ -276,6 +298,7 @@ const alivePlayers = () => players.filter((p) => !p.dead && !p.out);
 function nearestPlayer(pos, maxDist) {
   let best = null, bestD = maxDist;
   for (const p of alivePlayers()) {
+    if (p.riding != null) continue;   // wer auf dem Drachen fliegt, wird nicht angegriffen
     const d = p.root.position.distanceTo(pos);
     if (d < bestD) { best = p; bestD = d; }
   }
@@ -283,7 +306,7 @@ function nearestPlayer(pos, maxDist) {
 }
 
 function hurtPlayer(p, rawDmg) {
-  if (p.dead || p.out) return;
+  if (p.dead || p.out || p.riding != null) return;
   // Bessere Rüstung = weniger Schaden
   const dmg = Math.max(1, Math.round(rawDmg * (1 - 0.08 * p.level)));
   p.hp -= dmg;
@@ -681,6 +704,7 @@ function autoTarget(p, range, maxAngle) {
 }
 
 function attack(p) {
+  if (dragonMount(p)) { p.cooldown = 0.4; return; }   // oben auf dem Turm: auf den Drachen steigen
   if (talkTo(p)) { p.cooldown = 0.3; return; }   // in der Nähe eines Bürgers: reden statt zaubern
   if (kid && useTool(p)) return;
   const W = WEAPONS[p.weapon];
@@ -784,6 +808,8 @@ function updatePlayerLogic(p, dt) {
       if (p.out) p.dead = 0.001;
       else respawn(p);
     }
+  } else if (dragonFly(p, dt)) {
+    p.hp = 100;   // im Flug passiert einem nichts
   } else if (dialogStep(p)) {
     p.hp = Math.min(100, p.hp + dt);   // im Gespräch bleibt man stehen
   } else {
@@ -855,20 +881,21 @@ function posePlayer(p, dt) {
     armR = p.attackT > 0 ? -2.4 + prog * 2.1 : -0.5;
     wpn.rotation.x = 0;
   }
-  animateHuman(p.h, p.walk, !!p.moving, armR, armL);
+  animateHuman(p.h, p.walk, p.riding == null && !!p.moving, armR, armL);
+  poseRider(p);
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
   if (isTouch && p.index === me) updateAttackButton(p);
-  if (visible(p.index)) drawMinimap(p.index, players, dt);
+  if (visible(p.index)) drawMinimap(p.index, players, dt, dragonMapMarks());
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist.
   // In einer Höhle geht sie tief unter die Felsdecke und bleibt im Gang.
   const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
   const rx = root.position.x, rz = root.position.z;
-  const inCave = underRock(rx, rz);
+  const py = root.position.y;   // oben auf Mauer oder Turm stören die Mauern darunter die Kamera nicht
+  const inCave = py < 3 && underRock(rx, rz);
   p.caveK = (p.caveK || 0) + ((inCave ? 1 : 0) - (p.caveK || 0)) * Math.min(1, dt * 5);
   let wantDist = 7;
-  const py = root.position.y;   // oben auf Mauer oder Turm stören die Mauern darunter die Kamera nicht
   if (inCave) {
     wantDist = 4.5;
     for (let d = 0.4; d <= 4.5; d += 0.25) {
@@ -888,6 +915,7 @@ function posePlayer(p, dt) {
   camLook.set(rx + fx * (3 - k), py + 1.6 - 0.3 * k, rz + fz * (3 - k));
   // Unten im Burghof: Kamera unter dem Wehrgang bleiben lassen, sonst sieht man nur Bretter
   if (py < 1 && underDeck(camPos.x, camPos.z)) camPos.y = Math.min(camPos.y, WALK_H - 0.9);
+  if (riderCamera(p, camPos, camLook)) p.camDist = 7;   // auf dem Drachen: weiter hinten und über dem Drachen
   if (!p.camInit) { p.cam.position.copy(camPos); p.camInit = true; }
   p.cam.position.lerp(camPos, 1 - Math.exp(-dt * 10));
   p.cam.lookAt(camLook);
@@ -899,11 +927,12 @@ function updateAttackButton(p) {
   const sp = p.special && p.weapon === p.special.type ? p.special : null;
   const pct = sp ? Math.max(0, Math.round((sp.t / (sp.max || 15)) * 100)) : 100;
   const talk = !!nearNpc(p.root.position);
-  const key = wIcon(p.weapon) + pct + talk;
+  const fly = p.riding != null;
+  const key = wIcon(p.weapon) + pct + talk + fly;
   if (key === atkKey) return;
   atkKey = key;
   const btn = $('tAttack');
-  btn.textContent = talk ? '💬' : wIcon(p.weapon);
+  btn.textContent = fly ? '🛬' : talk ? '💬' : wIcon(p.weapon);
   btn.style.background = sp ? `conic-gradient(#ffd54fcc ${pct}%, #ffffff30 0)` : '';
 }
 
@@ -2059,6 +2088,7 @@ function resetGame() {
   for (const pr of projectiles) scene.remove(pr.m);
   projectiles.length = 0;
   pending = pending.filter((t) => t.fn === spawnAnimal);
+  resetDragons(players);
   players.forEach((p) => { resetPlayer(p); emit(['w', p.index, null]); });
   spawnAllEnemies();
   if (kid) {
@@ -2111,6 +2141,7 @@ function buildSnapshot() {
     ts: treasures,
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
+    dg: dragonSnapshot(),
     ev: netEvents.splice(0),
   };
 }
@@ -2130,6 +2161,7 @@ function syncMap(map, rows, create, update, remove) {
 
 function applySnapshot(s) {
   applyVillageSnapshot(s.vg);
+  applyDragonSnapshot(s.dg, players);
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
@@ -2525,7 +2557,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -2567,6 +2599,7 @@ function step(dt) {
       updateCages(dt);
       updateWizardLogic(dt);
       updateVillages(dt, players);
+      updateDragons(dt, players);
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));
@@ -2588,6 +2621,7 @@ function step(dt) {
     poseBuilds(dt);
     poseCaves(dt);
     poseVillages(dt, players);
+    poseDragons(dt, isSim());
     updateFallers(dt);
   }
   updateFrogs(dt);
