@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
+import { WORLD } from './util.js';
 
 const f1 = (v) => v.toFixed(1);
 // Kein Gras auf den Wegen und Dorfplätzen und im See
@@ -20,7 +21,6 @@ const EXTRA_MASK = [
 const uniforms = {
   uTime: { value: 0 },
   uFocus: { value: new THREE.Vector2(0, 60) },
-  uRadius: { value: 30 },
   uRocks: { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) },   // Berge aus Felsblöcken: kein Gras (x, z, Radius)
 };
 
@@ -33,6 +33,8 @@ float segD(vec2 p, vec2 a, vec2 b) {
   return length(p - a - ab * t);
 }
 float grassMask(vec2 p) {
+  // Am Spielfeldrand hört die Wiese auf
+  if (max(abs(p.x), abs(p.y)) > ${f1(WORLD - 0.3)}) return 0.0;
   for (int i = 0; i < 16; i++) {
     if (length(p - uRocks[i].xy) < uRocks[i].z) return 0.0;
   }
@@ -82,14 +84,27 @@ function bladeClump(blades, rand) {
   return g;
 }
 
+// Zwei Graslagen, beide wandern mit dem Spieler mit:
+// - innen dicht und fein (wie bisher)
+// - außen doppelt so weit, aber lockerer und mit etwas größeren Büscheln aus weniger Halmen.
+//   In der Ferne sieht man die Lücken nicht, und so bleibt das Spiel schnell.
+// Wo die innere Lage ausblendet, blendet die äußere ein, damit man keine Kante sieht.
 export function makeGrassField(scene, { low = false } = {}) {
-  let seed = 99;
-  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const R = low ? 22 : 32;
-  const count = low ? 2600 : 7500;
-  uniforms.uRadius.value = R;
+  const inner = grassLayer(scene, {
+    seed: 99, R, count: low ? 2600 : 7500, blades: low ? 4 : 5, grow: 1,
+    fadeIn: [-2, -1], fadeOut: [R * 0.65, R],
+  });
+  const outer = grassLayer(scene, {
+    seed: 4242, R: R * 2, count: low ? 2600 : 9000, blades: 3, grow: 1.3,
+    fadeIn: [R * 0.65, R], fadeOut: [R * 1.6, R * 2],
+  });
+  return [inner, outer];
+}
 
-  const clump = bladeClump(low ? 4 : 5, rand);
+function grassLayer(scene, { seed, R, count, blades, grow, fadeIn, fadeOut }) {
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const clump = bladeClump(blades, rand);
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = clump.index;
   geo.setAttribute('position', clump.attributes.position);
@@ -99,21 +114,28 @@ export function makeGrassField(scene, { low = false } = {}) {
     offsets[i * 4] = (rand() - 0.5) * 2 * R;
     offsets[i * 4 + 1] = (rand() - 0.5) * 2 * R;
     offsets[i * 4 + 2] = rand() * Math.PI * 2;
-    offsets[i * 4 + 3] = 0.7 + rand() * 0.7;
+    offsets[i * 4 + 3] = (0.7 + rand() * 0.7) * grow;
   }
   geo.setAttribute('offset', new THREE.InstancedBufferAttribute(offsets, 4));
   geo.instanceCount = count;
 
+  const layer = {
+    uLayerR: { value: R },
+    uFadeIn: { value: new THREE.Vector2(...fadeIn) },
+    uFadeOut: { value: new THREE.Vector2(...fadeOut) },
+  };
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   mat.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uniforms);
+    Object.assign(sh.uniforms, uniforms, layer);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 offset;\nuniform float uTime;\nuniform vec2 uFocus;\nuniform float uRadius;\n' + MASK)
+      .replace('#include <common>', '#include <common>\nattribute vec4 offset;\nuniform float uTime;\nuniform vec2 uFocus;\nuniform float uLayerR;\nuniform vec2 uFadeIn;\nuniform vec2 uFadeOut;\n' + MASK)
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
       .replace('#include <begin_vertex>', /* glsl */ `
-        vec2 rel = mod(offset.xy - uFocus + uRadius, 2.0 * uRadius) - uRadius;
+        vec2 rel = mod(offset.xy - uFocus + uLayerR, 2.0 * uLayerR) - uLayerR;
         vec2 wp = uFocus + rel;
-        float s = offset.w * (1.0 - smoothstep(uRadius * 0.65, uRadius, length(rel))) * grassMask(wp);
+        float d = length(rel);
+        float s = offset.w * smoothstep(uFadeIn.x, uFadeIn.y, d) * (1.0 - smoothstep(uFadeOut.x, uFadeOut.y, d));
+        if (s > 0.0) s *= grassMask(wp);   // Maske nur rechnen, wo das Büschel überhaupt sichtbar ist
         float cr = cos(offset.z), sr = sin(offset.z);
         vec3 p = vec3(position.x * cr - position.z * sr, position.y, position.x * sr + position.z * cr) * s;
         float h2 = position.y * position.y;
