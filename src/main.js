@@ -2347,13 +2347,28 @@ $('btnSingle').onclick = () => { initAudio(); startGame('single'); };
 $('btnLocal').onclick = () => { initAudio(); startGame('local'); };
 $('btnNet').onclick = () => { $('menuMain').hidden = true; $('menuNet').hidden = false; };
 $('btnBack').onclick = () => location.reload();
-$('menuBtn').onclick = () => { saveToBrowser(); location.reload(); };
+// ☰ Menü im Spiel: weiterspielen, Mitspieler übers Internet einladen oder zurück zum Startmenü
+const gameMenuOpen = () => !$('gameMenu').hidden;
+$('menuBtn').onclick = () => {
+  const canInvite = mode === 'single' || mode === 'local';
+  $('gmInvite').hidden = $('gmInviteInfo').hidden = !canInvite;
+  $('gameMenu').hidden = false;
+};
+$('gmResume').onclick = () => { $('gameMenu').hidden = true; };
+$('gmHome').onclick = () => { saveToBrowser(); location.reload(); };
+$('gmInvite').onclick = () => {
+  // Speichern und neu laden: im Startmenü geht dann gleich "Spiel erstellen" mit diesem Spielstand los
+  saveToBrowser();
+  const q = new URLSearchParams(location.search);
+  q.set('host', '1');
+  location.href = location.pathname + '?' + q.toString();
+};
 const status = (html) => ($('netStatus').innerHTML = html);
 const netError = (err) => status('😕 Das hat nicht geklappt: ' + (err?.type === 'peer-unavailable' ? 'Code nicht gefunden.' : err?.message || err));
 
-$('btnHost').onclick = async () => {
+async function hostNet(save) {
   initAudio();
-  $('btnHost').disabled = true;
+  $('btnHost').disabled = $('btnHostSave').disabled = true;
   const code = randomCode();
   status('Verbinde …');
   try {
@@ -2363,6 +2378,7 @@ $('btnHost').onclick = async () => {
         conn = c;
         conn.send({ t: 'cfg', kid });   // der Mitspieler übernimmt die Einstellung
         startGame('host');
+        if (save) applySave(save);
         startVoice(peer, conn.peer, true);
         conn.on('data', (d) => {
           const p2 = players[1];
@@ -2377,7 +2393,8 @@ $('btnHost').onclick = async () => {
     });
     status(`Sag deinem Mitspieler diesen Code:<br><b>${code}</b><br>Warte auf Mitspieler …`);
   } catch (err) { netError(err); }
-};
+}
+$('btnHost').onclick = () => hostNet(null);
 
 $('btnJoin').onclick = async () => {
   initAudio();
@@ -2536,6 +2553,20 @@ function continueFrom(s) {
     $('saveBox').hidden = false;
     $('saveInfo').textContent = saveSummary(saved);
     $('btnContinue').onclick = () => continueFrom(saved);
+    // Übers Internet: auch mit dem gespeicherten Spiel, nicht nur mit einem neuen
+    $('btnHostSave').hidden = $('hostSaveInfo').hidden = false;
+    $('hostSaveInfo').textContent = saveSummary(saved);
+    $('btnHost').textContent = '🏰 Neues Spiel erstellen';
+    $('btnHostSave').onclick = () => hostNet(saved);
+  }
+  // Aus dem Menü im Spiel "Mitspieler einladen" gewählt: gleich mit dem Spielstand ein Internetspiel erstellen
+  const q = new URLSearchParams(location.search);
+  if (q.has('host')) {
+    q.delete('host');
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
+    $('menuMain').hidden = true;
+    $('menuNet').hidden = false;
+    hostNet(saved);
   }
   $('btnLoadFile').onclick = () => $('loadFile').click();
   $('loadFile').onchange = async () => {
@@ -2562,7 +2593,9 @@ let menuT = 0;
 let lastFrame = performance.now();
 function tick() {
   lastFrame = performance.now();
-  step(Math.min(clock.getDelta(), 0.05));
+  const dt = Math.min(clock.getDelta(), 0.05);
+  // Allein oder zu zweit an einer Tastatur hält das offene Menü das Spiel an
+  if (!(gameMenuOpen() && (mode === 'single' || mode === 'local'))) step(dt);
   render();
   requestAnimationFrame(tick);
 }

@@ -75,6 +75,10 @@
   #menu { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px;
           background: linear-gradient(180deg, #0008, #0004 40%, #0008); box-sizing: border-box; }
   body.playing #menu { display: none; }
+  #gameMenu { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center;
+              justify-content: center; padding: 16px; background: #0008; box-sizing: border-box; z-index: 20; }
+  #gameMenu[hidden] { display: none; }
+  #gameMenu h1 { font-size: 30px; margin-bottom: 12px; }
   .panel { width: 100%; max-width: 440px; background: #1b2a3aee; color: #fff; border-radius: 16px; padding: 24px;
            box-shadow: 0 10px 40px #0008; text-align: center; box-sizing: border-box; max-height: 100%; overflow: auto; }
   .panel h1 { margin: 0 0 4px; font-size: 36px; letter-spacing: 1px; color: #ffd54f; text-shadow: 0 3px 0 #7a5a00; }
@@ -199,6 +203,17 @@
   <button class="tbtn" id="tSwap">🔄</button>
 </div>
 
+<div id="gameMenu" hidden>
+  <div class="panel">
+    <h1>Menü</h1>
+    <button class="big" id="gmResume">▶ Weiterspielen</button>
+    <button class="big" id="gmInvite">🌐 Mitspieler übers Internet einladen</button>
+    <p class="howto" id="gmInviteInfo">Dein Spiel wird gespeichert und du bekommst einen Code. Dein Mitspieler wählt bei sich
+      „Zu zweit übers Internet“ und gibt den Code ein. Dann spielt ihr zusammen in deinem Spiel weiter.</p>
+    <button class="big" id="gmHome">🏠 Zum Startmenü</button>
+  </div>
+</div>
+
 <div id="menu">
   <div class="panel">
     <h1>Knights in Castles</h1>
@@ -212,12 +227,14 @@
       </div>
       <button class="big" id="btnSingle">👤 Einzelspieler</button>
       <button class="big desk" id="btnLocal">👥 Zu zweit an einer Tastatur</button>
-      <button class="big desk" id="btnNet">🌐 Zu zweit übers Internet</button>
-      <p class="mobileOnly howto">Auf dem Handy gibt es den Einzelspieler. Zu zweit spielt ihr am Computer.</p>
+      <button class="big" id="btnNet">🌐 Zu zweit übers Internet</button>
+      <p class="mobileOnly howto">Zu zweit an einer Tastatur geht nur am Computer. Übers Internet könnt ihr auch auf dem Tablet zusammen spielen.</p>
       <button class="small" id="btnLoadFile">📂 Spielstand-Datei laden</button>
       <input type="file" id="loadFile" accept=".json,application/json" hidden>
     </div>
     <div id="menuNet" hidden>
+      <button class="big" id="btnHostSave" hidden>🏰 Mit meinem Spielstand erstellen</button>
+      <p class="howto" id="hostSaveInfo" hidden></p>
       <button class="big" id="btnHost">🏰 Spiel erstellen</button>
       <p class="howto">oder den Code vom anderen Spieler eingeben (es gilt die Einstellung von dem, der das Spiel erstellt):</p>
       <div class="join"><input id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off"><button class="big" id="btnJoin">Beitreten</button></div>
