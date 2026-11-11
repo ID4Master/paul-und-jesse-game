@@ -23,12 +23,14 @@ const EXTRA_MASK = [
 const uniforms = {
   uTime: { value: 0 },
   uFocus: { value: new THREE.Vector2(0, 60) },
-  uRocks: { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) },   // Berge aus Felsblöcken: kein Gras (x, z, Radius)
+  uRocks: { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) },
+  uRects: { value: Array.from({ length: 40 }, () => new THREE.Vector4(0, 0, 0, 0)) },   // Häuser, Festungen: kein Gras (x1, z1, x2, z2)   // Berge aus Felsblöcken: kein Gras (x, z, Radius)
 };
 
 // Hier wächst kein Gras: Weg, Werkstatt, Stall, Ablade-Fläche, Teich und die Burghöfe
 const MASK = /* glsl */ `
 uniform vec3 uRocks[16];
+uniform vec4 uRects[40];
 float segD(vec2 p, vec2 a, vec2 b) {
   vec2 ab = b - a;
   float t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
@@ -39,6 +41,10 @@ float grassMask(vec2 p) {
   if (max(abs(p.x), abs(p.y)) > ${f1(WORLD - 0.3)}) return 0.0;
   for (int i = 0; i < 16; i++) {
     if (length(p - uRocks[i].xy) < uRocks[i].z) return 0.0;
+  }
+  for (int i = 0; i < 40; i++) {
+    vec4 r = uRects[i];
+    if (p.x > r.x && p.x < r.z && p.y > r.y && p.y < r.w) return 0.0;
   }
   ${EXTRA_MASK}
   if (abs(p.x) < 3.4 && p.y > -83.0 && p.y < 71.0) return 0.0;
@@ -249,6 +255,14 @@ export function updateGrass(dt) {
 
 // Vor jedem Bild: Gras um diese Stelle herum zeigen
 // Unter den Bergen (und in gegrabenen Höhlen) wächst kein Gras
+// Rechtecke ohne Gras: [{ x1, z1, x2, z2 }], höchstens 40
+export function setGrassRects(list) {
+  uniforms.uRects.value.forEach((v, i) => {
+    const r = list[i];
+    if (r) v.set(r.x1, r.z1, r.x2, r.z2); else v.set(0, 0, 0, 0);
+  });
+}
+
 export function setGrassHoles(list) {
   list.slice(0, 16).forEach((r, i) => uniforms.uRocks.value[i].set(r.x, r.z, r.r));
 }

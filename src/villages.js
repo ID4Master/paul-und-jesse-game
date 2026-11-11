@@ -1,6 +1,6 @@
 import * as THREE from '../lib/three.module.js';
 import { std, mesh, circles, boxes, move, blocked, WORLD } from './util.js';
-import { addHouse, addWell, addHay, addFence, addFlag, HOME, ENEMY_CASTLE, POND, MOUNTAINS } from './world.js';
+import { addHouse, addWell, addHay, addFence, addFlag, HOME, ENEMY_CASTLE, POND, MOUNTAINS, HOUSES } from './world.js';
 import { makeHuman, animateHuman, makeAnimal, animateAnimal } from './characters.js';
 import { dirtTex } from './textures.js';
 import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
@@ -379,7 +379,11 @@ export function setupVillages(scene, a) {
   api = a;
   for (const [id, name, vil, dx, dz, face, look] of PEOPLE) {
     const h = makeHuman({ weapons: [], ...look });
-    const x = vil.x + dx, z = vil.z + dz;
+    let x = vil.x + dx;
+    const z = vil.z + dz;
+    // Niemand soll in einer Haustür stehen: sonst kommt man nicht hinein
+    const door = HOUSES.find((hs) => Math.abs(x - hs.x) < 1.4 && z > hs.z + hs.d / 2 - 0.3 && z < hs.z + hs.d / 2 + 1.8);
+    if (door) x = door.x - 2.3;
     h.root.position.set(x, 0, z);
     h.root.rotation.y = face;
     if (look.kid) h.root.scale.setScalar(0.72);

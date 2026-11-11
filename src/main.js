@@ -1,9 +1,9 @@
 import * as THREE from '../lib/three.module.js';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles, boxes } from './util.js';
 import { moveClimb, solidAbove, underDeck, setTowerClimb, makeTowerModel, TOWER_REL, WALK_H } from './castlewalk.js';
-import { setGrassFocus, setGrassHoles } from './grass.js';
+import { setGrassFocus, setGrassHoles, setGrassRects } from './grass.js';
 import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCellSolid, dugKey, applyDugKey, resetMassif, neighbours } from './rocks.js';
-import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS } from './world.js';
+import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS, HOUSES, houseAt } from './world.js';
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
 import { BAKERY } from './map.js';
@@ -80,6 +80,9 @@ scene.add(sun);
 buildWorld(scene, { low: lowGfx, sunDir: SUN_DIR, extra: buildVillages });
 buildFarm(scene);
 makeTroughFill(scene);
+const grassRects = { houses: HOUSES.map((h) => ({ x1: h.x - h.w / 2 - 0.2, z1: h.z - h.d / 2 - 0.2, x2: h.x + h.w / 2 + 0.2, z2: h.z + h.d / 2 + 0.2 })), extra: [] };
+const refreshGrassRects = () => setGrassRects([...grassRects.houses, ...grassRects.extra]);
+refreshGrassRects();
 
 // ================= Die drei Dörfer: Bürger, Gespräche und Rätsel =================
 const DLG_HINT = () => (isTouch ? 'Tippe auf eine Antwort' : '◀ ▶ auswählen · Leertaste / Enter: OK');
@@ -255,7 +258,7 @@ function resetPlayer(p) {
   p.out = false;
   p.special = null;
   p.apples = 0;
-  p.pack = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0 };
+  p.pack = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0, gold: 0 };
   p.toolShow = '';
   p.toolT = 0;
   p.weapon = p.baseWeapon = p.startWeapon;
@@ -499,7 +502,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { axe: 0xffb74d, pickaxe: 0x90caf9, wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, grain: 0xe0b84a, bread: 0xd7a15a, scythe: 0xc5e1a5, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { axe: 0xffb74d, pickaxe: 0x90caf9, wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, grain: 0xe0b84a, gold: 0xffd54f, bread: 0xd7a15a, scythe: 0xc5e1a5, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -558,6 +561,9 @@ function makeItemEntity(type, x, z) {
       model.add(st, mesh(new THREE.CylinderGeometry(0.05, 0.035, 0.2, 5), std(0xe0b84a), (k - 2) * 0.09, 0.36, 0));
     }
     model.add(mesh(new THREE.TorusGeometry(0.09, 0.025, 6, 12).rotateX(Math.PI / 2), std(0x8d6e4a), 0, -0.05, 0));
+  }
+  if (type === 'gold') {
+    for (let k = 0; k < 4; k++) model.add(mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 14), metal(0xd4af37), (k % 2) * 0.05, k * 0.06, 0));
   }
   if (type === 'bread') {
     const loaf = mesh(new THREE.SphereGeometry(0.22, 14, 10), std(0xc68642, { roughness: 0.6 }));
@@ -940,7 +946,7 @@ function posePlayer(p, dt) {
   const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
   const rx = root.position.x, rz = root.position.z;
   const py = root.position.y;   // oben auf Mauer oder Turm stören die Mauern darunter die Kamera nicht
-  const inCave = py < 3 && underRock(rx, rz);
+  const inCave = py < 3 && (underRock(rx, rz) || !!houseAt(rx, rz));   // in Höhlen und Häusern tief und nah
   p.caveK = (p.caveK || 0) + ((inCave ? 1 : 0) - (p.caveK || 0)) * Math.min(1, dt * 5);
   let wantDist = 7;
   if (inCave) {
@@ -1472,11 +1478,11 @@ function spawnKidWorld() {
 // ================= Kinderfreundlich: Rucksack, Ablade-Fläche und Werkstatt =================
 // Holz, Steine, Seife und Sternenstaub sammeln. Auf der Ablade-Fläche vor der Burg fliegt alles in die Truhe.
 // In der Werkstatt neben der Burg hat jedes Bauwerk eine eigene Fläche: draufstellen und es wird gebaut.
-const MATERIALS = ['wood', 'stone', 'soap', 'star', 'grain'];
-const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨', grain: '🌾' };
-const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub', grain: 'Getreide' };
+const MATERIALS = ['wood', 'stone', 'soap', 'star', 'grain', 'gold'];
+const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨', grain: '🌾', gold: '💰' };
+const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub', grain: 'Getreide', gold: 'Gold' };
 const PACK_SIZE = 10;
-const store = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0 };
+const store = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0, gold: 0 };
 const packCount = (p) => MATERIALS.reduce((n, m) => n + p.pack[m], 0);
 const matText = (o) => MATERIALS.filter((m) => o[m] > 0).map((m) => `${MAT_ICON[m]}${o[m]}`).join(' ');
 const inCastle = (pos) => Math.abs(pos.x - HOME.x) < 9.5 && pos.z > HOME.z - 9.5 && pos.z < HOME.z + 9.5;
@@ -2197,6 +2203,53 @@ function useTool(p) {
   return false;
 }
 
+// ================= Häuser: hineingehen und aus der Truhe klauen =================
+// In jedem Dorfhaus steht eine Truhe mit Gold 💰 und etwas zu essen. Nach ein paar Minuten ist sie wieder voll.
+const LOOT_REFILL = 180;
+function stealFrom(h, p) {
+  h.full = false;
+  h.t = LOOT_REFILL;
+  const want = 2 + Math.floor(Math.random() * 3);
+  let got = 0;
+  for (let k = 0; k < want; k++) {
+    if (packCount(p) < PACK_SIZE) { p.pack.gold++; got++; }
+    else dropItem('gold', { x: h.cx + (Math.random() - 0.5), z: h.cz + 0.9 });
+  }
+  const snack = ['bread', 'apple', 'egg', 'star'][Math.floor(Math.random() * 4)];
+  dropItem(snack, { x: h.cx - 0.6, z: h.cz + 1.1 });
+  fxFloat(`💰 +${want} Gold geklaut!`, '#ffd54f', { x: h.cx, z: h.cz });
+  fxSfx('pickup');
+  later(0.8, () => fxFloat('😠 He! Haltet den Dieb!', '#ff8a80', { x: h.x, z: h.z + h.d / 2 + 1 }));
+  fxPlayerMsg(p.index, `💰 Psst! ${want} Gold aus der Truhe geklaut${got < want ? ' (der Rest liegt daneben, Rucksack voll)' : ''}. Bringt das Gold ins Burglager, damit könnt ihr eure Festung ausbauen. Die Truhe füllt sich in ein paar Minuten wieder.`, 5000);
+}
+
+function updateHouses(dt) {
+  for (const h of HOUSES) {
+    if (!h.loot) continue;
+    if (!h.full && (h.t -= dt) <= 0) h.full = true;
+    if (!h.full) continue;
+    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - h.cx, q.root.position.z - h.cz) < 1.5);
+    if (p) stealFrom(h, p);
+  }
+}
+
+// Dach ausblenden, wenn jemand an diesem Gerät im Haus steht; Truhendeckel offen, wenn leer
+function poseHouses(dt) {
+  for (const h of HOUSES) {
+    const inside = players.some((p) => visible(p.index) && !p.out && p.root.position.y < 2 && Math.abs(p.root.position.x - h.x) < h.w / 2 + 0.3 && Math.abs(p.root.position.z - h.z) < h.d / 2 + 0.3);
+    if (inside !== h.inside) { h.inside = inside; h.hide.forEach((m) => (m.visible = !inside)); }
+    if (!h.loot) continue;
+    const want = h.full ? 0 : -1.7;
+    h.lid.rotation.x += (want - h.lid.rotation.x) * Math.min(1, dt * 6);
+    h.coins.visible = h.full;
+  }
+}
+const houseKey = () => HOUSES.filter((h) => h.loot).map((h) => (h.full ? 1 : 0)).join('');
+function applyHouseKey(k) {
+  if (typeof k !== 'string') return;
+  HOUSES.filter((h) => h.loot).forEach((h, i) => { if (k[i] === '0' || k[i] === '1') { h.full = k[i] === '1'; if (!h.full && !h.t) h.t = LOOT_REFILL; } });
+}
+
 function mowGrain(p, ripe) {
   // Getreide kommt gleich in den Rucksack. Ist er voll, bleibt der Rest liegen.
   let got = 0;
@@ -2221,6 +2274,7 @@ function resetWorldStuff() {
   for (const c of CAVES) setCaveState(c, 0);
   treasures = 0;
   resetField();
+  HOUSES.forEach((h) => { h.full = true; h.t = 0; });
   farm.trough = 10;
   showTrough(farm.trough);
 }
@@ -2333,6 +2387,7 @@ function buildSnapshot() {
     rk: rockKeysForNet(),
     ts: treasures,
     tr: farm.trough,
+    hl: houseKey(),
     wf: fieldKey(),
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
@@ -2411,6 +2466,7 @@ function applySnapshot(s) {
   treasures = s.ts || 0;
   if (s.tr !== undefined && s.tr !== farm.trough) { farm.trough = s.tr; showTrough(farm.trough); }
   applyFieldKey(s.wf);
+  applyHouseKey(s.hl);
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
     seenB.add(id);
@@ -2525,6 +2581,7 @@ function startGame(newMode) {
   }[mode];
   showMsg('msg', text, 4000);
   if (isSim()) later(16, () => fxGlobalMsg('🏘️ Neu: Drei Dörfer zum Entdecken, mit Leuten zum Reden und Rätseln! Der Weg geht zwischen eurer Burg und dem Stall los. Schaut auf die Karte oben rechts!', 7000));
+  if (kid && isSim()) later(75, () => fxGlobalMsg('🏠 Neu: In die Häuser in den Dörfern kann man jetzt hineingehen! Drinnen steht eine Truhe mit Gold 💰. Aber Psst, nicht erwischen lassen!', 7000));
   if (kid && isSim()) later(40, () => fxGlobalMsg('🌾 Neu: Hinter dem Stall wächst Getreide! Mit der Sense mähen, im Stall in den Futtertrog schütten, sonst laufen eure Tiere weg. Und esst genug, sonst bekommt ihr Hunger 🍴!', 8000));
   if (kid && isSim()) later(9, () => { if (!built.axe) fxGlobalMsg('Tipp: Holz gibt es nur noch vom Bäumefällen. Sucht die Axt 🪓 im Wald links neben eurer Burg!', 5000); });
 }
@@ -2627,6 +2684,7 @@ function makeSave() {
       stallFood: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => Math.round(a.state === 'stall' ? a.food ?? 100 : 100)),
       trough: farm.trough,
       field: fieldKey(),
+      houses: houseKey(),
       caves: CAVES.map((c) => c.state),
       rock: MASSIFS.map(dugKey),
       treasures,
@@ -2673,6 +2731,7 @@ function applySave(s) {
     });
     if (s.trough !== undefined) { farm.trough = int(s.trough, 0, TROUGH_MAX); showTrough(farm.trough); }
     applyFieldKey(s.field);
+    applyHouseKey(s.houses);
     // Gegrabene Höhlen (ältere Spielstände hatten noch keine)
     MASSIFS.forEach((M, k) => applyDugKey(M, typeof s.rock?.[k] === 'string' ? s.rock[k].slice(0, 200) : ''));
     rockVer++;
@@ -2780,7 +2839,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -2819,7 +2878,7 @@ function step(dt) {
       spawnApples(dt);
       spawnMaterials(dt);
       updateBuildLogic(dt);
-      if (kid) { updateHunger(dt); growField(dt); }
+      if (kid) { updateHunger(dt); growField(dt); updateHouses(dt); }
       updateTrees(dt);
       updateCaves(dt);
       updateCages(dt);
@@ -2846,6 +2905,7 @@ function step(dt) {
     players.forEach(spectate);
     poseBuilds(dt);
     poseCaves(dt);
+    poseHouses(dt);
     poseVillages(dt, players);
     poseDragons(dt, isSim());
     updateFallers(dt);

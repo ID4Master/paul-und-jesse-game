@@ -129,20 +129,44 @@ function addEnemyCastle(scene) {
   addWell(scene, cx - 9, cz - 1);
 }
 
-// Fachwerkhaus, um das man herumlaufen kann
+// Fachwerkhaus: man kann durch die Tür hineingehen. Drinnen stehen Bett, Tisch und eine Truhe.
+// Steht man drin, wird das Dach ausgeblendet, damit die Kamera hineinschauen kann.
 const plaster = std(0xe8dcc0);
 const timber = std(0x4a3020);
 const glass = std(0x1d2a33, { roughness: 0.3 });
-export function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
+const floorWood = std(0x9a7650);
+const bedWood = std(0x6d4c30), blanket = std(0x3f6fb5), pillow = std(0xf5f0e6), chestWood = std(0x8d5a2b), gold = std(0xd4af37, { metalness: 0.6, roughness: 0.35 });
+export const HOUSES = [];
+const WALL = 0.25, DOOR = 1.7;
+
+export function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e, { loot = true } = {}) {
   const h = 3.2;
-  scene.add(mesh(new THREE.BoxGeometry(w, h, d), plaster, x, h / 2, z));
+  const hide = [];   // Dach und Schornstein: drinnen unsichtbar
+  // Wände mit Türöffnung vorne (Seite +z)
+  const wall = (cx, cz, sx, sz) => {
+    scene.add(mesh(new THREE.BoxGeometry(sx, h, sz), plaster, cx, h / 2, cz));
+    addBox(cx - sx / 2, cx + sx / 2, cz - sz / 2, cz + sz / 2);
+  };
+  wall(x, z - d / 2 + WALL / 2, w, WALL);                        // hinten
+  wall(x - w / 2 + WALL / 2, z, WALL, d - WALL * 2);              // links
+  wall(x + w / 2 - WALL / 2, z, WALL, d - WALL * 2);              // rechts
+  const side = (w - DOOR) / 2;
+  wall(x - DOOR / 2 - side / 2, z + d / 2 - WALL / 2, side, WALL); // vorne links
+  wall(x + DOOR / 2 + side / 2, z + d / 2 - WALL / 2, side, WALL); // vorne rechts
+  const lintel = mesh(new THREE.BoxGeometry(DOOR, h - 2.2, WALL), plaster, x, 2.2 + (h - 2.2) / 2, z + d / 2 - WALL / 2);
+  scene.add(lintel);
+  // Holzboden
+  const floor = mesh(new THREE.PlaneGeometry(w - WALL * 2, d - WALL * 2), floorWood, x, 0.04, z);
+  floor.rotation.x = -Math.PI / 2;
+  floor.castShadow = false;
+  scene.add(floor);
   // Balken an den Kanten und in der Mitte
   for (const [bx, bz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]]) {
     scene.add(mesh(new THREE.BoxGeometry(0.25, h, 0.25), timber, x + bx, h / 2, z + bz));
   }
-  for (const side of [-1, 1]) {
-    scene.add(mesh(new THREE.BoxGeometry(w + 0.1, 0.22, 0.12), timber, x, h * 0.55, z + side * (d / 2 + 0.02)));
-    scene.add(mesh(new THREE.BoxGeometry(0.12, 0.22, d + 0.1), timber, x + side * (w / 2 + 0.02), h * 0.55, z));
+  for (const sd of [-1, 1]) {
+    scene.add(mesh(new THREE.BoxGeometry(w + 0.1, 0.22, 0.12), timber, x, h * 0.55, z + sd * (d / 2 + 0.02)));
+    scene.add(mesh(new THREE.BoxGeometry(0.12, 0.22, d + 0.1), timber, x + sd * (w / 2 + 0.02), h * 0.55, z));
   }
   // Satteldach
   const shape = new THREE.Shape();
@@ -152,16 +176,51 @@ export function addHouse(scene, x, z, w, d, roofColor = 0x7b4a2e) {
   shape.lineTo(-w / 2 - 0.4, 0);
   const roofGeo = new THREE.ExtrudeGeometry(shape, { depth: d + 0.8, bevelEnabled: false });
   roofGeo.translate(0, 0, -(d + 0.8) / 2);
-  scene.add(mesh(roofGeo, std(roofColor, { roughness: 0.8, map: houseTiles }), x, h, z));
-  // Tür, Fenster, Schornstein
-  scene.add(mesh(new THREE.BoxGeometry(1, 1.9, 0.08), std(0x5d3a1a), x, 0.95, z + d / 2 + 0.03));
+  const roof = mesh(roofGeo, std(roofColor, { roughness: 0.8, map: houseTiles }), x, h, z);
+  scene.add(roof);
+  hide.push(roof);
+  // Offene Tür, Fenster, Schornstein
+  const door = mesh(new THREE.BoxGeometry(0.08, 1.9, 1), std(0x5d3a1a), x - DOOR / 2 - 0.05, 0.95, z + d / 2 + 0.5);
+  scene.add(door);
   for (const wx of [-w / 3, w / 3]) {
-    scene.add(mesh(new THREE.BoxGeometry(0.8, 0.8, 0.06), glass, x + wx, 2, z + d / 2 + 0.03));
+    if (Math.abs(wx) > DOOR / 2 + 0.45) scene.add(mesh(new THREE.BoxGeometry(0.8, 0.8, 0.06), glass, x + wx, 2, z + d / 2 + 0.03));
     scene.add(mesh(new THREE.BoxGeometry(0.8, 0.8, 0.06), glass, x + wx, 2, z - d / 2 - 0.03));
   }
-  scene.add(mesh(new THREE.BoxGeometry(0.6, 1.8, 0.6), darkStone, x + w / 4, h + w * 0.3, z - d / 4));
-  addBox(x - w / 2, x + w / 2, z - d / 2, z + d / 2);
+  const chimney = mesh(new THREE.BoxGeometry(0.6, 1.8, 0.6), darkStone, x + w / 4, h + w * 0.3, z - d / 4);
+  scene.add(chimney);
+  hide.push(chimney);
+  // Einrichtung: Bett hinten links, Tisch in der Mitte, Truhe hinten rechts
+  const ix1 = x - w / 2 + WALL, iz1 = z - d / 2 + WALL;
+  scene.add(mesh(new THREE.BoxGeometry(1.1, 0.45, 2), bedWood, ix1 + 0.65, 0.22, iz1 + 1.05));
+  scene.add(mesh(new THREE.BoxGeometry(1.0, 0.12, 1.5), blanket, ix1 + 0.65, 0.5, iz1 + 1.3));
+  scene.add(mesh(new THREE.BoxGeometry(0.8, 0.14, 0.35), pillow, ix1 + 0.65, 0.52, iz1 + 0.3));
+  addBox(ix1, ix1 + 1.2, iz1, iz1 + 2.05);
+  scene.add(mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.08, 12), bedWood, x + 0.4, 0.75, z + 0.1));
+  scene.add(mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.72, 8), bedWood, x + 0.4, 0.36, z + 0.1));
+  circles.push({ x: x + 0.4, z: z + 0.1, r: 0.5 });
+  const house = { x, z, w, d, hide, loot, full: true, t: 0, inside: false };
+  if (loot) {
+    const cx = x + w / 2 - WALL - 0.75, cz = iz1 + 0.5;
+    const chest = new THREE.Group();
+    chest.position.set(cx, 0, cz);
+    chest.add(mesh(new THREE.BoxGeometry(1.0, 0.55, 0.6), chestWood, 0, 0.28, 0));
+    const lid = new THREE.Group();
+    lid.position.set(0, 0.56, -0.3);
+    lid.add(mesh(new THREE.BoxGeometry(1.05, 0.15, 0.65), chestWood, 0, 0.07, 0.3));
+    lid.add(mesh(new THREE.BoxGeometry(0.16, 0.16, 0.04), gold, 0, 0.02, 0.63));
+    chest.add(lid);
+    const coins = mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.12, 10), gold, 0, 0.52, 0);
+    chest.add(coins);
+    scene.add(chest);
+    addBox(cx - 0.5, cx + 0.5, cz - 0.3, cz + 0.3);
+    Object.assign(house, { cx, cz, lid, coins });
+  }
+  HOUSES.push(house);
+  return house;
 }
+
+// Ist dieser Punkt in einem Haus? (für Kamera, Dach und Truhe)
+export const houseAt = (x, z) => HOUSES.find((hs) => Math.abs(x - hs.x) < hs.w / 2 - 0.1 && Math.abs(z - hs.z) < hs.d / 2 - 0.1);
 
 export function addWell(scene, x, z) {
   scene.add(mesh(new THREE.CylinderGeometry(1, 1.05, 0.9, 16, 1, true), darkStone, x, 0.45, z));
@@ -226,7 +285,7 @@ function addStall(scene) {
   straw.rotation.x = -Math.PI / 2;
   scene.add(straw);
   scene.add(mesh(new THREE.BoxGeometry(3, 0.5, 0.8), wood, 24, 0.25, 66));
-  addHouse(scene, 24, 84.5, 9, 5, 0xa83232);
+  addHouse(scene, 24, 84.5, 9, 5, 0xa83232, { loot: false });
   addHay(scene, 30, 78);
   addHay(scene, 18.5, 78.5);
 }
