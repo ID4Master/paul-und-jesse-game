@@ -130,6 +130,25 @@ function makeAxe() {
   return g;
 }
 
+// Sense: langer Stiel, Griff in der Mitte und eine gebogene Klinge
+function makeScythe() {
+  const g = new THREE.Group();
+  const handle = mesh(new THREE.CylinderGeometry(0.03, 0.035, 1.5, 8), std(0x8d6e4a), 0, 0, 0.6);
+  handle.rotation.x = Math.PI / 2;
+  const grip = mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.25, 6), std(0x6d4c30), 0, 0.12, 0.35);
+  const steel = metal(0xc9ced3);
+  const blade = new THREE.Group();
+  blade.position.set(0, 0, 1.33);
+  for (let k = 0; k < 5; k++) {
+    const seg = mesh(new THREE.BoxGeometry(0.02, 0.06 - k * 0.008, 0.2), steel, 0, 0.18 * k, -0.06 * k * k * 0.5);
+    seg.rotation.x = 0.25 * k + 1.2;
+    seg.position.set(0, 0.04 + k * 0.16, -0.02 * k * k);
+    blade.add(seg);
+  }
+  g.add(handle, grip, blade);
+  return g;
+}
+
 function makePickaxe() {
   const g = new THREE.Group();
   const handle = mesh(new THREE.CylinderGeometry(0.03, 0.035, 1.0, 8), std(0x8d6e4a), 0, 0, 0.45);
@@ -280,6 +299,7 @@ export function makeHuman(o) {
     if (w === 'snowball') add(w, makeSnowball());
     if (w === 'axe') add(w, makeAxe());
     if (w === 'pickaxe') add(w, makePickaxe());
+    if (w === 'scythe') add(w, makeScythe());
   }
   setWeapon(h, o.weapons[0]);
   if (o.shield) {
@@ -509,6 +529,7 @@ export function animateAnimal(a, phase, moving) {
 export function makeWeaponModel(name) {
   if (name === 'axe') return makeAxe();
   if (name === 'pickaxe') return makePickaxe();
+  if (name === 'scythe') return makeScythe();
   if (name === 'starstaff') return makeStarStaff();
   if (name === 'bubbler') return makeBubbler();
   if (name === 'gun') return makeGun();

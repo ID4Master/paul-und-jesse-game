@@ -1,9 +1,12 @@
 import * as THREE from '../lib/three.module.js';
-import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
+import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles, boxes } from './util.js';
 import { moveClimb, solidAbove, underDeck, setTowerClimb, makeTowerModel, TOWER_REL, WALK_H } from './castlewalk.js';
 import { setGrassFocus, setGrassHoles } from './grass.js';
 import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCellSolid, dugKey, applyDugKey, resetMassif, neighbours } from './rocks.js';
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS } from './world.js';
+import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
+  TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
+import { BAKERY } from './map.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
@@ -75,6 +78,8 @@ Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, f
 scene.add(sun);
 
 buildWorld(scene, { low: lowGfx, sunDir: SUN_DIR, extra: buildVillages });
+buildFarm(scene);
+makeTroughFill(scene);
 
 // ================= Die drei Dörfer: Bürger, Gespräche und Rätsel =================
 const DLG_HINT = () => (isTouch ? 'Tippe auf eine Antwort' : '◀ ▶ auswählen · Leertaste / Enter: OK');
@@ -223,7 +228,7 @@ function createPlayer(index, keymap, source) {
     index, name: 'Spieler ' + (index + 1), startX: index ? 2.5 : -2.5, startWeapon: index ? 'bow' : 'fork',
     keymap: KEYMAPS[keymap], source, input: { fwd: 0, turn: 0, attack: false }, swapReq: false,
   };
-  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun', 'wand', 'orbwand', 'starstaff', 'bubbler', 'axe', 'pickaxe'] });
+  p.h = makeHuman({ shirt: RANK_COLORS[0], ...LOOKS[index], strawHat: true, armor: true, weapons: ['fork', 'bow', 'firesword', 'gun', 'wand', 'orbwand', 'starstaff', 'bubbler', 'axe', 'pickaxe', 'scythe'] });
   p.root = p.h.root;
   scene.add(p.root);
   p.bar = makeBar();
@@ -250,7 +255,7 @@ function resetPlayer(p) {
   p.out = false;
   p.special = null;
   p.apples = 0;
-  p.pack = { wood: 0, stone: 0, soap: 0, star: 0 };
+  p.pack = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0 };
   p.toolShow = '';
   p.toolT = 0;
   p.weapon = p.baseWeapon = p.startWeapon;
@@ -268,6 +273,8 @@ function respawn(p) {
   p.heading = p.bodyYaw = Math.PI;
   p.faceT = 0;
   p.hp = 100;
+  p.food = 100;
+  p.hungerHintT = 0;
   p.dead = 0;
   p.attackT = 0;
   p.attackDur = 0.35;
@@ -287,15 +294,22 @@ function updateHud(p) {
     : `Noch ${KILLS_PER_LEVEL - (p.kills % KILLS_PER_LEVEL)} ${kid ? 'Schelme verzaubern' : 'Gegner'} bis ${rankName(p.level + 1)}`;
   const xpLine = (kid ? `🍎 ${p.apples} Äpfel · 🐾 ${freed}/${CAGE_SPOTS.length} Tiere befreit · 💎 ${treasures}/${CAVES.length} Schätze · ${xp}` : xp)
     + ` · 🏅 ${solvedCount()}/${PUZZLES.length} Dorfrätsel`;
-  const toolText = [built.axe ? '🪓' : '', built.pickaxe ? '⛏️' : ''].join('');
+  const toolText = [built.axe ? '🪓' : '', built.pickaxe ? '⛏️' : '', built.scythe ? '🌾' : ''].join('');
+  const food = Math.max(0, Math.round(p.food ?? 100));
   const packLine = kid ? `🎒 Rucksack (${packCount(p)}/${PACK_SIZE}): ${matText(p.pack) || 'leer'}${toolText ? ' · Werkzeug: ' + toolText : ''}` : '';
-  const key = [hp, p.level, lives, weapon, xpLine, packLine].join('|');
+  const key = [hp, food, p.level, lives, weapon, xpLine, packLine].join('|');
   if (key === p.hudCache) return;
   p.hudCache = key;
   const fill = p.hud.querySelector('.fill');
   fill.style.width = hp + '%';
   fill.style.background = hpColor(hp / 100);
   p.hud.querySelector('.hpnum').textContent = hp + ' / 100';
+  const ff = p.hud.querySelector('.ffill');
+  if (ff) {
+    ff.style.width = food + '%';
+    ff.style.background = food > 50 ? '#ffb74d' : food > 20 ? '#ff8a3d' : '#e53935';
+    p.hud.querySelector('.fnum').textContent = food > 20 ? `🍴 Satt ${food} %` : `🍴 Hunger! ${food} %`;
+  }
   p.hud.querySelector('.level').textContent = `Level ${p.level + 1}: ${rankName(p.level)}`;
   p.hud.querySelector('.lives').textContent = lives;
   p.hud.querySelector('.weapon').textContent = weapon;
@@ -485,7 +499,7 @@ const heartGeo = (() => {
   g.scale(0.03, 0.03, 0.03);
   return g;
 })();
-const ITEM_GLOW = { axe: 0xffb74d, pickaxe: 0x90caf9, wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, gun: 0x40c4ff, firesword: 0xff7a1a };
+const ITEM_GLOW = { axe: 0xffb74d, pickaxe: 0x90caf9, wood: 0x8d6e63, stone: 0xbdbdbd, soap: 0xf48fb1, star: 0xfff176, milk: 0xffffff, egg: 0xffe0b2, heart: 0xff3b3b, life: 0xffd54f, meat: 0xffa040, apple: 0xff5050, grain: 0xe0b84a, bread: 0xd7a15a, scythe: 0xc5e1a5, gun: 0x40c4ff, firesword: 0xff7a1a };
 
 function makeItemEntity(type, x, z) {
   const g = new THREE.Group();
@@ -537,7 +551,21 @@ function makeItemEntity(type, x, z) {
     leaf.scale.set(1, 0.3, 0.6);
     model.add(leaf);
   }
-  if (type === 'axe' || type === 'pickaxe') {
+  if (type === 'grain') {
+    for (let k = 0; k < 5; k++) {
+      const st = mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 4), std(0xd9b04a), (k - 2) * 0.05, 0, 0);
+      st.rotation.z = (k - 2) * 0.12;
+      model.add(st, mesh(new THREE.CylinderGeometry(0.05, 0.035, 0.2, 5), std(0xe0b84a), (k - 2) * 0.09, 0.36, 0));
+    }
+    model.add(mesh(new THREE.TorusGeometry(0.09, 0.025, 6, 12).rotateX(Math.PI / 2), std(0x8d6e4a), 0, -0.05, 0));
+  }
+  if (type === 'bread') {
+    const loaf = mesh(new THREE.SphereGeometry(0.22, 14, 10), std(0xc68642, { roughness: 0.6 }));
+    loaf.scale.set(1.6, 0.8, 1);
+    model.add(loaf);
+    for (const x of [-0.15, 0, 0.15]) model.add(mesh(new THREE.BoxGeometry(0.04, 0.03, 0.26), std(0xf3d9a4), x, 0.16, 0));
+  }
+  if (type === 'axe' || type === 'pickaxe' || type === 'scythe') {
     const w = makeWeaponModel(type);
     w.rotation.x = -Math.PI / 2;
     w.position.y = -0.55;
@@ -584,13 +612,21 @@ function pickUp(item, p) {
     return true;
   }
   if (item.type === 'heart') { p.hp = Math.min(100, p.hp + 30); fxFloat('+30 ❤', '#ff8a80', pos); }
+  // Essen macht satt 🍴 und gibt Energie
+  const eat = (hp, food, text, color) => {
+    p.hp = Math.min(100, p.hp + hp);
+    p.food = Math.min(100, (p.food ?? 100) + food);
+    fxFloat(`${text} 🍴+${food}`, color, pos);
+  };
   if (item.type === 'apple') {
-    if (p.apples < 9) { p.apples++; fxFloat(`+1 🍎 (${p.apples})`, '#ff8a80', pos); }
-    else { p.hp = Math.min(100, p.hp + 20); fxFloat('Mmh, Apfel! +20', '#ff8a80', pos); }
+    // Mit Hunger wird der Apfel gegessen, sonst kommt er in die Tasche für die Tiere
+    if (p.apples < 9 && p.food >= 40) { p.apples++; fxFloat(`+1 🍎 (${p.apples})`, '#ff8a80', pos); }
+    else eat(15, 15, 'Mmh, Apfel!', '#ff8a80');
   }
-  if (item.type === 'milk') { p.hp = Math.min(100, p.hp + 30); fxFloat('Leckere Milch! +30', '#ffffff', pos); }
-  if (item.type === 'egg') { p.hp = Math.min(100, p.hp + 15); fxFloat('Frisches Ei! +15', '#ffe0b2', pos); }
-  if (item.type === 'meat') { p.hp = Math.min(100, p.hp + 40); fxFloat('Lecker! +40', '#ffcc80', pos); }
+  if (item.type === 'milk') eat(30, 25, 'Leckere Milch!', '#ffffff');
+  if (item.type === 'egg') eat(15, 20, 'Frisches Ei!', '#ffe0b2');
+  if (item.type === 'bread') eat(20, 60, 'Frisches Brot! 🍞', '#ffcc80');
+  if (item.type === 'meat') eat(40, 40, 'Lecker!', '#ffcc80');
   if (item.type === 'life') { p.lives = Math.min(5, p.lives + 1); fxFloat('+1 Leben', '#ffd54f', pos); }
   if (item.type === 'gun' || item.type === 'firesword') {
     p.special = { type: item.type, t: specialTime(), max: specialTime() };
@@ -835,7 +871,7 @@ function updatePlayerLogic(p, dt) {
     p.cooldown -= dt;
     if (p.holdAtk && !inp.attack) p.holdAtk = false;
     if (inp.attack && p.cooldown <= 0 && !p.holdAtk) attack(p);
-    p.hp = Math.min(100, p.hp + dt);
+    if ((p.food ?? 100) > 0) p.hp = Math.min(100, p.hp + dt);   // mit leerem Bauch erholt man sich nicht
     if (p.special) {
       p.special.t -= dt;
       if (p.special.t <= 0) {
@@ -1195,6 +1231,8 @@ function updateKidAnimal(c, dt) {
     fxPlayerMsg(c.owner.index, `${capital(ANIMAL_NAME[c.type])} ist jetzt in deinem Stall!`, 2500);
     c.owner = null;
     c.prodT = PRODUCE[c.type][1] / 2;
+    c.food = 100;
+    c.starve = 0;
   }
 
   if (c.state === 'wild') {
@@ -1236,9 +1274,15 @@ function updateKidAnimal(c, dt) {
     }
     speed = c.wander ? (c.type === 'chicken' ? 1 : 1.5) : 0;
     if (c.state === 'stall') {
+      if (stallHunger(c, dt)) return;
       const nx = pos.x + Math.sin(c.heading) * 1.5, nz = pos.z + Math.cos(c.heading) * 1.5;
       if (!inStall(nx, nz, 1)) c.heading = Math.atan2((STALL.x1 + STALL.x2) / 2 - pos.x, (STALL.z1 + STALL.z2) / 2 - pos.z);
-      c.prodT -= dt;
+      // Hungrige Tiere laufen zum Futtertrog, wenn dort Getreide liegt
+      if (c.food < 60 && farm.trough > 0) {
+        c.heading = Math.atan2(TROUGH.x - pos.x, TROUGH.z + 1.3 - pos.z);
+        c.wander = true;
+      }
+      c.prodT -= c.food > 0 ? dt : 0;   // hungrige Tiere geben nichts
       if (c.prodT <= 0) {
         const [item, every, text] = PRODUCE[c.type];
         c.prodT = every;
@@ -1252,6 +1296,54 @@ function updateKidAnimal(c, dt) {
   if (speed && !move(root, Math.sin(c.heading) * speed * dt, Math.cos(c.heading) * speed * dt, 0.6) && c.state !== 'follow') c.heading += Math.PI / 2;
   root.rotation.y = c.heading;
   c.spd = speed;
+}
+
+// Tiere im Stall bekommen Hunger. Sie fressen Getreide aus dem Futtertrog.
+// Bekommen sie zu lange nichts, laufen sie weg und sind verschwunden (niemand stirbt).
+const ANIMAL_FULL = 300, ANIMAL_LEAVE = 150;
+function stallHunger(c, dt) {
+  const pos = c.root.position;
+  if (c.food === undefined) { c.food = 100; c.starve = 0; }
+  c.food = Math.max(0, c.food - (100 / ANIMAL_FULL) * dt);
+  if (c.food < 60 && farm.trough > 0 && Math.hypot(pos.x - TROUGH.x, pos.z - TROUGH.z) < 2.6) {
+    farm.trough--;
+    showTrough(farm.trough);
+    c.food = 100;
+    c.starve = 0;
+    c.warned = false;
+    fxFloat('🌾 Mampf!', '#ffe082', pos);
+  }
+  c.bar.visible = c.food < 40;
+  if (c.bar.visible) drawBar(c.bar, c.food / 100);
+  if (c.food > 0) return false;
+  c.starve += dt;
+  if (!c.warned && farm.hungryMsgT < performance.now()) {
+    c.warned = true;
+    farm.hungryMsgT = performance.now() + 30000;
+    fxGlobalMsg(`😟 ${capital(ANIMAL_NAME[c.type])} im Stall hat Hunger! Mäht Getreide 🌾 hinter dem Stall und bringt es zum Futtertrog.`, 5000);
+  }
+  if (c.starve < ANIMAL_LEAVE) return false;
+  // Weggelaufen: mit einer Staubwolke verschwunden
+  for (let k = 0; k < 4; k++) fxFloat('💨', '#ffffff', { x: pos.x + (Math.random() - 0.5) * 2, z: pos.z + (Math.random() - 0.5) * 2 });
+  fxSfx('poof');
+  fxGlobalMsg(`💨 ${capital(ANIMAL_NAME[c.type])} hatte zu lange Hunger und ist aus dem Stall weggelaufen. Füttert eure Tiere mit Getreide 🌾!`, 6000);
+  scene.remove(c.root);
+  animals.splice(animals.indexOf(c), 1);
+  return true;
+}
+
+// Spieler bekommen langsam Hunger. Ganz ohne Essen sinkt die Energie, aber nur bis zu einem Rest.
+const PLAYER_FULL = 420;
+function updateHunger(dt) {
+  for (const p of alivePlayers()) {
+    if (p.food === undefined) p.food = 100;
+    p.food = Math.max(0, p.food - (100 / PLAYER_FULL) * dt);
+    if (p.food <= 0 && p.hp > 30) p.hp = Math.max(30, p.hp - dt);
+    if (p.food < 20 && (p.hungerHintT || 0) < performance.now()) {
+      p.hungerHintT = performance.now() + 30000;
+      fxPlayerMsg(p.index, '🍴 Du hast Hunger! Iss etwas: Eier 🥚, Milch 🥛, Äpfel 🍎 oder Brot 🍞.', 4000);
+    }
+  }
 }
 
 // ================= Kinderfreundlich: Käfige, böser Zauberer, Gewinnen =================
@@ -1380,11 +1472,11 @@ function spawnKidWorld() {
 // ================= Kinderfreundlich: Rucksack, Ablade-Fläche und Werkstatt =================
 // Holz, Steine, Seife und Sternenstaub sammeln. Auf der Ablade-Fläche vor der Burg fliegt alles in die Truhe.
 // In der Werkstatt neben der Burg hat jedes Bauwerk eine eigene Fläche: draufstellen und es wird gebaut.
-const MATERIALS = ['wood', 'stone', 'soap', 'star'];
-const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨' };
-const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub' };
+const MATERIALS = ['wood', 'stone', 'soap', 'star', 'grain'];
+const MAT_ICON = { wood: '🪵', stone: '🪨', soap: '🧼', star: '✨', grain: '🌾' };
+const MAT_NAME = { wood: 'Holz', stone: 'Stein', soap: 'Seife', star: 'Sternenstaub', grain: 'Getreide' };
 const PACK_SIZE = 10;
-const store = { wood: 0, stone: 0, soap: 0, star: 0 };
+const store = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0 };
 const packCount = (p) => MATERIALS.reduce((n, m) => n + p.pack[m], 0);
 const matText = (o) => MATERIALS.filter((m) => o[m] > 0).map((m) => `${MAT_ICON[m]}${o[m]}`).join(' ');
 const inCastle = (pos) => Math.abs(pos.x - HOME.x) < 9.5 && pos.z > HOME.z - 9.5 && pos.z < HOME.z + 9.5;
@@ -1405,8 +1497,12 @@ const BUILDS = [
     done: 'Jetzt könnt ihr Bäume fällen: vor einen Baum stellen und zaubern. Holz gibt es nur noch vom Bäumefällen.' },
   { id: 'pickaxe', tool: true, name: 'Spitzhacke', icon: '⛏️', px: -25, pz: 63, cost: { wood: 4, stone: 4 },
     done: 'Die Berge sind aus Felsblöcken! Haut unten Block für Block Höhlen und Gänge hinein. In vier Bergen wartet tief drinnen ein Schatz!' },
+  { id: 'scythe', tool: true, name: 'Sense', icon: '🌾', px: -25, pz: 69, cost: { wood: 1, stone: 2 },
+    done: 'Jetzt könnt ihr das reife Getreide hinter dem Stall mähen: ins Feld stellen und zaubern. Bringt das Getreide 🌾 in den Futtertrog im Stall!' },
+  { id: 'bakery', name: 'Bäckerei', icon: '🍞', px: -19, pz: 69, x: BAKERY.x, z: BAKERY.z, cost: { wood: 4, stone: 4 },
+    done: 'Hinter dem Getreidefeld steht jetzt eine Bäckerei! Die Mühle mahlt Getreide 🌾 aus dem Burglager zu Mehl, und der Ofen backt Brot 🍞. Brot macht richtig satt!' },
 ];
-const TOOLS = ['axe', 'pickaxe'];
+const TOOLS = ['axe', 'pickaxe', 'scythe'];
 const built = {};
 
 // Leuchtende Fläche auf dem Boden mit Bild und Schrift
@@ -1473,7 +1569,7 @@ const flatLabel = (text) => {
 const workshop = new THREE.Group();
 {
   const wood = std(0x8a6a44);
-  const floor = mesh(new THREE.BoxGeometry(19.5, 0.08, 14), std(0xa1824f), -18.5, 0.02, 60);
+  const floor = mesh(new THREE.BoxGeometry(19.5, 0.08, 19.5), std(0xa1824f), -18.5, 0.02, 62.75);
   workshop.add(floor);
   workshop.add(mesh(new THREE.BoxGeometry(1, 0.9, 3), wood, -22.3, 0.45, 60));
   workshop.add(mesh(new THREE.BoxGeometry(0.5, 0.3, 0.7), std(0x777777), -22.3, 1.05, 59));
@@ -1496,6 +1592,13 @@ chest.position.set(UNLOAD.x, 0, UNLOAD.z + 2.8);
 chest.rotation.y = Math.PI;
 scene.add(unloadPad, chest);
 
+// Futtertrog im Stall: wer mit Getreide im Rucksack auf die Fläche läuft, schüttet es in den Trog
+const troughPad = makePad('#ffd54f');
+troughPad.position.set(TROUGH_PAD.x, 0.07, TROUGH_PAD.z);
+scene.add(troughPad);
+const farm = { trough: 10, bakeT: 8, hintT: 0, hungryMsgT: 0 };
+showTrough(farm.trough);
+
 const sites = BUILDS.map((b) => {
   const pad = makePad('#ffffff');
   pad.position.set(b.px, 0.1, b.pz);
@@ -1504,7 +1607,7 @@ const sites = BUILDS.map((b) => {
 });
 const updateSitesVisible = () => {
   const show = kid && started;
-  workshop.visible = unloadPad.visible = chest.visible = show;
+  workshop.visible = unloadPad.visible = chest.visible = troughPad.visible = show;
   sites.forEach((s) => (s.pad.visible = show));
 };
 
@@ -1539,6 +1642,16 @@ function makeBuildModel(id) {
       g.add(mesh(new THREE.SphereGeometry(0.9, 12, 10), std(0x3f8f3a), x, 1.9, z));
       for (let k = 0; k < 4; k++) g.add(mesh(new THREE.SphereGeometry(0.12, 8, 6), std(0xd32f2f), x + Math.sin(k * 1.7) * 0.7, 1.7 + (k % 2) * 0.4, z + Math.cos(k * 1.7) * 0.7));
     }
+  }
+  if (id === 'bakery') {
+    const m = makeBakeryModel();
+    m.position.set(0, 0, 0);
+    g.add(m);
+    g.userData.sails = m.userData.sails;
+    bakeryBlock.box = { x1: BAKERY.x - 2.6, x2: BAKERY.x + 2.6, z1: BAKERY.z - 2.1, z2: BAKERY.z + 2.1 };
+    bakeryBlock.oven = { x: BAKERY.x - 3.4, z: BAKERY.z - 0.6, r: 1.1 };
+    boxes.push(bakeryBlock.box);
+    circles.push(bakeryBlock.oven);
   }
   if (id === 'tower') {
     // Mit Wendeltreppe außen herum und Plattform oben (siehe castlewalk.js)
@@ -1584,7 +1697,7 @@ function tryBuild(s, p) {
 
 // Sachen fliegen in hohem Bogen aus dem Rucksack in die Truhe
 const flyers = [];
-function flyToChest(from, icons) {
+function flyToChest(from, icons, to = null) {
   icons.forEach((icon, i) => {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 64;
@@ -1598,7 +1711,7 @@ function flyToChest(from, icons) {
     sp.renderOrder = 12;
     sp.visible = false;
     scene.add(sp);
-    flyers.push({ sp, t: -i * 0.08, sx: from.x, sz: from.z });
+    flyers.push({ sp, t: -i * 0.08, sx: from.x, sz: from.z, to });
   });
   sfx.pickup();
 }
@@ -1608,12 +1721,13 @@ function updateFlyers(dt) {
     if (f.t < 0) continue;
     const t = Math.min(1, f.t);
     f.sp.visible = true;
-    f.sp.position.set(f.sx + (chest.position.x - f.sx) * t, 1.5 + Math.sin(t * Math.PI) * 3 - t * 0.5, f.sz + (chest.position.z - f.sz) * t);
+    const ex = f.to ? f.to.x : chest.position.x, ez = f.to ? f.to.z : chest.position.z;
+    f.sp.position.set(f.sx + (ex - f.sx) * t, 1.5 + Math.sin(t * Math.PI) * 3 - t * 0.5, f.sz + (ez - f.sz) * t);
     if (t >= 1) {
       scene.remove(f.sp);
       f.sp.material.map.dispose();
       flyers.splice(flyers.indexOf(f), 1);
-      chestBounce = 1;
+      if (!f.to) chestBounce = 1;
     }
   }
 }
@@ -1648,6 +1762,35 @@ function updateBuildLogic(dt) {
     flyToChest(p.root.position, icons);
     emit(['u', p.root.position.x, p.root.position.z, icons]);
     fxPlayerMsg(p.index, `Ab ins Burglager: ${text} 🏰`, 2500);
+  }
+  // Futtertrog: Getreide aus dem Rucksack in den Trog schütten
+  for (const p of alivePlayers()) {
+    if (!p.pack.grain || !onPad(p.root.position, TROUGH_PAD.x, TROUGH_PAD.z)) continue;
+    const n = Math.min(p.pack.grain, TROUGH_MAX - farm.trough);
+    if (n <= 0) {
+      if ((p.troughHintT || 0) < performance.now()) {
+        p.troughHintT = performance.now() + 5000;
+        fxPlayerMsg(p.index, 'Der Futtertrog ist voll! Bring das restliche Getreide 🌾 ins Burglager, dann backt die Bäckerei Brot daraus.', 3500);
+      }
+      continue;
+    }
+    p.pack.grain -= n;
+    farm.trough += n;
+    showTrough(farm.trough);
+    const icons = Array(n).fill('🌾');
+    flyToChest(p.root.position, icons, TROUGH);
+    emit(['ft', p.root.position.x, p.root.position.z, icons]);
+    fxPlayerMsg(p.index, `🌾 ${n} Getreide in den Futtertrog! Jetzt haben eure Tiere ${farm.trough} Portionen Futter.`, 3000);
+  }
+  // Bäckerei: aus 2 Getreide im Burglager wird ein Brot
+  if (built.bakery && (farm.bakeT -= dt) <= 0) {
+    farm.bakeT = 12;
+    const lying = items.filter((it) => it.type === 'bread' && Math.hypot(it.g.position.x - BREAD_SPOT.x, it.g.position.z - BREAD_SPOT.z) < 5).length;
+    if (store.grain >= 2 && lying < 3) {
+      store.grain -= 2;
+      dropItem('bread', { x: BREAD_SPOT.x + (Math.random() - 0.5) * 3, z: BREAD_SPOT.z - Math.random() });
+      fxFloat('🍞 Frisch gebacken!', '#ffcc80', { x: BAKERY.x, z: BAKERY.z - 2 });
+    }
   }
   // Werkstatt: auf eine Fläche stellen
   for (const s of sites) {
@@ -1691,6 +1834,7 @@ function updateBuildLogic(dt) {
   }
 }
 const garden = { t: 5 };
+const bakeryBlock = { box: null, oven: null };
 
 let catapultSwing = 0;
 let padPulse = 0;
@@ -1700,6 +1844,9 @@ function poseBuilds(dt) {
     catapultSwing = Math.max(0, catapultSwing - dt * 2);
     arm.rotation.x = -Math.sin(catapultSwing * Math.PI) * 1.2;
   }
+  const sails = sites.find((x) => x.b.id === 'bakery').model?.userData.sails;
+  if (sails) sails.rotation.z -= dt * 0.8;
+  drawPad(troughPad, { icon: '🌾', title: 'Futtertrog', line: `${farm.trough} / ${TROUGH_MAX}`, state: farm.trough < 3 ? 'normal' : 'built' });
   updateFlyers(dt);
   chestBounce = Math.max(0, chestBounce - dt * 4);
   chest.scale.setScalar(1 + Math.sin(chestBounce * Math.PI) * 0.15);
@@ -1728,6 +1875,7 @@ function resetBuilds() {
   }
   for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === HOME.x + TOWER_REL.x && c.z === HOME.z + TOWER_REL.z)) circles.splice(circles.indexOf(c), 1);
   setTowerClimb(false);
+  if (bakeryBlock.box) { boxes.splice(boxes.indexOf(bakeryBlock.box), 1); circles.splice(circles.indexOf(bakeryBlock.oven), 1); bakeryBlock.box = bakeryBlock.oven = null; }
   for (const b of bigBubbles) scene.remove(b.m);
   bigBubbles.length = 0;
   updateSitesVisible();
@@ -1736,7 +1884,7 @@ function resetBuilds() {
 // ================= Kinderfreundlich: Werkzeuge, Bäume fällen, Höhlen und Schätze =================
 // Mit der Axt 🪓 fällt man Bäume (nur so gibt es Holz), mit der Spitzhacke ⛏️ haut man Höhlen in die Berge.
 // Beide Werkzeuge liegen irgendwo in der Welt oder werden in der Werkstatt gebaut. Sie gehören allen Spielern.
-const TOOL_SPOTS = { axe: { x: -33, z: 84 }, pickaxe: { x: 64, z: 24 } };
+const TOOL_SPOTS = { axe: { x: -33, z: 84 }, pickaxe: { x: 64, z: 24 }, scythe: { x: 53, z: 72 } };
 const TREE_HITS = 3, REGROW = 150;
 
 function freeNear(x, z) {
@@ -2014,6 +2162,23 @@ function useTool(p) {
     p.face = Math.atan2(x - pos.x, z - pos.z);
     p.faceT = 0.6;
   };
+  // Sense: alles reife Getreide rund um den Spieler abmähen
+  if (inField(pos.x, pos.z, 1.5)) {
+    const ripe = ripeNear(pos.x, pos.z, 2.6);
+    if (ripe.length && built.scythe) {
+      swing('scythe', ripe[0].x, ripe[0].z);
+      mowGrain(p, ripe);
+      return true;
+    }
+    if (ripe.length && (p.scytheHintT || 0) < performance.now()) {
+      p.scytheHintT = performance.now() + 10000;
+      fxPlayerMsg(p.index, '🌾 Zum Getreidemähen braucht ihr eine Sense! Sie liegt hinten am Feld, oder baut sie in der Werkstatt.', 4500);
+    }
+    if (!ripe.length && built.scythe && (p.scytheHintT || 0) < performance.now()) {
+      p.scytheHintT = performance.now() + 6000;
+      fxPlayerMsg(p.index, 'Hier ist das Getreide noch nicht reif. Es wächst wieder nach, bis es golden ist.', 3000);
+    }
+  }
   const hit = blockAhead(p);
   if (hit) {
     if (built.pickaxe) { swing('pickaxe', hit.cell.x, hit.cell.z); digBlock(p, hit.M, hit.cell); return true; }
@@ -2032,6 +2197,20 @@ function useTool(p) {
   return false;
 }
 
+function mowGrain(p, ripe) {
+  // Getreide kommt gleich in den Rucksack. Ist er voll, bleibt der Rest liegen.
+  let got = 0;
+  for (const pl of ripe) {
+    pl.grow = 0;
+    showPlant(pl);
+    if (packCount(p) < PACK_SIZE) { p.pack.grain++; got++; }
+    else dropItem('grain', { x: pl.x + (Math.random() - 0.5) * 0.6, z: pl.z + (Math.random() - 0.5) * 0.6 });
+  }
+  if (got) fxFloat(`+${got} 🌾 Getreide`, '#ffe082', p.root.position);
+  if (got < ripe.length) fxPlayerMsg(p.index, '🎒 Rucksack voll! Bringt das Getreide in den Futtertrog im Stall oder ins Burglager.', 3000);
+  fxSfx('pickup');
+}
+
 function resetWorldStuff() {
   for (const i of [...fallen.keys()]) regrowTree(i);
   for (const f of fallers) scene.remove(f.outer);
@@ -2041,6 +2220,9 @@ function resetWorldStuff() {
   rockVer++;
   for (const c of CAVES) setCaveState(c, 0);
   treasures = 0;
+  resetField();
+  farm.trough = 10;
+  showTrough(farm.trough);
 }
 CAVES.forEach((c) => setCaveState(c, 0));
 
@@ -2057,7 +2239,7 @@ function spawnMaterials(dt) {
   for (let n = 0; n < 20; n++) {
     const a = Math.random() * Math.PI * 2, r = 10 + Math.random() * 20;
     const x = base.x + Math.sin(a) * r, z = base.z + Math.cos(a) * r;
-    if (!blockedSpot(x, z, 1) && !inCastle({ x, z }) && !(x < -8 && x > -30 && z > 52 && z < 68)) { dropItem(type, { x, z }); return; }
+    if (!blockedSpot(x, z, 1) && !inCastle({ x, z }) && !(x < -8 && x > -30 && z > 52 && z < 74) && !inField(x, z, 3)) { dropItem(type, { x, z }); return; }
   }
 }
 
@@ -2134,10 +2316,10 @@ function buildSnapshot() {
     t: 's',
     p: players.map((p) => [r2(p.root.position.x), r2(p.root.position.z), r2(p.heading), r2(p.bodyYaw), Math.round(p.hp),
       p.level, p.lives, p.weapon, p.special ? p.special.type : '', p.special ? r2(p.special.t) : 0,
-      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow, r2(p.root.position.y)]),
+      r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow, r2(p.root.position.y), Math.round(p.food ?? 100)]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
-    a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd)]),
+    a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd), c.state === 'stall' ? Math.round(c.food ?? 100) : -1]),
     i: items.map((it) => [it.id, it.type, r2(it.g.position.x), r2(it.g.position.z)]),
     r: projectiles.map((pr) => [pr.id, pr.kind, pr.owner, r2(pr.m.position.x), r2(pr.m.position.y), r2(pr.m.position.z),
       r2(pr.vel.x), r2(pr.vel.y), r2(pr.vel.z)]),
@@ -2150,6 +2332,8 @@ function buildSnapshot() {
     cv: CAVES.map((c) => c.state),
     rk: rockKeysForNet(),
     ts: treasures,
+    tr: farm.trough,
+    wf: fieldKey(),
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
     dg: dragonSnapshot(),
@@ -2176,7 +2360,8 @@ function applySnapshot(s) {
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
-    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack, tool, y] = row;
+    const [x, z, heading, bodyYaw, hp, level, lives, weapon, spType, spT, attackT, attackDur, dead, out, kills, moving, apples, pack, tool, y, food] = row;
+    p.food = food ?? 100;
     p.apples = apples || 0;
     p.toolShow = tool || '';
     if (pack) MATERIALS.forEach((m, k) => (p.pack[m] = pack[k]));
@@ -2201,9 +2386,10 @@ function applySnapshot(s) {
     (e) => scene.remove(e.root));
   syncMap(remote.animals, s.a,
     ([id, type, x, z]) => Object.assign(makeAnimalEntity(type, x, z), { id }),
-    (c, [, , x, z, ry, dying, hp, spd]) => {
+    (c, [, , x, z, ry, dying, hp, spd, food]) => {
       c.tx = x; c.tz = z; c.root.rotation.y = ry; c.dying = dying; c.spd = spd;
       if (hp !== c.hp) { c.hp = hp; c.bar.visible = hp > 0; drawBar(c.bar, hp / c.maxHp); }
+      if (food >= 0 && food !== c.food) { c.food = food; c.bar.visible = food < 40; drawBar(c.bar, food / 100); }
     },
     (c) => scene.remove(c.root));
   freed = s.fr || 0;
@@ -2223,6 +2409,8 @@ function applySnapshot(s) {
   });
   if (s.cv) s.cv.forEach((st, k) => { if (CAVES[k] && CAVES[k].state !== st) setCaveState(CAVES[k], st); });
   treasures = s.ts || 0;
+  if (s.tr !== undefined && s.tr !== farm.trough) { farm.trough = s.tr; showTrough(farm.trough); }
+  applyFieldKey(s.wf);
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
     seenB.add(id);
@@ -2271,6 +2459,7 @@ function applySnapshot(s) {
     if (type === 'k') catapultSwing = 1;
     if (type === 'rk') { const M = MASSIFS[a], cell = M && M.cells[b]; if (cell && cell.solid) crackCell(M, cell); }
     if (type === 'u') flyToChest({ x: a, z: b }, c);
+    if (type === 'ft') flyToChest({ x: a, z: b }, c, TROUGH);
   }
 }
 
@@ -2336,12 +2525,13 @@ function startGame(newMode) {
   }[mode];
   showMsg('msg', text, 4000);
   if (isSim()) later(16, () => fxGlobalMsg('🏘️ Neu: Drei Dörfer zum Entdecken, mit Leuten zum Reden und Rätseln! Der Weg geht zwischen eurer Burg und dem Stall los. Schaut auf die Karte oben rechts!', 7000));
+  if (kid && isSim()) later(40, () => fxGlobalMsg('🌾 Neu: Hinter dem Stall wächst Getreide! Mit der Sense mähen, im Stall in den Futtertrog schütten, sonst laufen eure Tiere weg. Und esst genug, sonst bekommt ihr Hunger 🍴!', 8000));
   if (kid && isSim()) later(9, () => { if (!built.axe) fxGlobalMsg('Tipp: Holz gibt es nur noch vom Bäumefällen. Sucht die Axt 🪓 im Wald links neben eurer Burg!', 5000); });
 }
 
 // ================= Startmenü =================
 $('menuSub').textContent = 'Befreit die Tiere vom bösen Zauberer!';
-$('kidHint').textContent = 'Zähmt Tiere mit Äpfeln und bringt sie in euren Stall: Kühe geben Milch, Hühner legen Eier. Zauberstab statt Waffen.';
+$('kidHint').textContent = 'Zähmt Tiere mit Äpfeln und bringt sie in euren Stall: Kühe geben Milch, Hühner legen Eier. Füttert sie mit Getreide 🌾 und esst selbst genug! Zauberstab statt Waffen.';
 
 $('btnSingle').onclick = () => { initAudio(); startGame('single'); };
 $('btnLocal').onclick = () => { initAudio(); startGame('local'); };
@@ -2426,7 +2616,7 @@ const int = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0))
 function makeSave() {
   const s = {
     app: SAVE_APP, v: 1, when: new Date().toISOString(), kid,
-    players: players.map((p) => ({ level: p.level, kills: p.kills, lives: Math.max(1, p.lives), apples: p.apples, pack: { ...p.pack } })),
+    players: players.map((p) => ({ level: p.level, kills: p.kills, lives: Math.max(1, p.lives), apples: p.apples, pack: { ...p.pack }, food: Math.round(p.food ?? 100) })),
   };
   if (kid) {
     Object.assign(s, {
@@ -2434,6 +2624,9 @@ function makeSave() {
       built: Object.keys(built).filter((k) => built[k]),
       freed: CAGE_SPOTS.map((_, i) => i).filter((i) => !cages.some((c) => c.idx === i && !c.dying)),
       stall: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => a.type),
+      stallFood: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => Math.round(a.state === 'stall' ? a.food ?? 100 : 100)),
+      trough: farm.trough,
+      field: fieldKey(),
       caves: CAVES.map((c) => c.state),
       rock: MASSIFS.map(dugKey),
       treasures,
@@ -2451,6 +2644,7 @@ function applySave(s) {
     p.kills = int(d.kills, 0, 9999);
     p.lives = int(d.lives, 1, 5);
     p.apples = int(d.apples, 0, 9);
+    p.food = d.food === undefined ? 100 : int(d.food, 0, 100);
     for (const m of MATERIALS) p.pack[m] = int(d.pack?.[m], 0, PACK_SIZE);
     applyLevel(p);
   });
@@ -2469,13 +2663,16 @@ function applySave(s) {
       freed++;
     }
     // Tierfreunde wieder in den Stall
-    for (const type of (s.stall || []).slice(0, 40)) {
-      if (!PRODUCE[type]) continue;
+    (s.stall || []).slice(0, 40).forEach((type, k) => {
+      if (!PRODUCE[type]) return;
+      const food = s.stallFood?.[k] === undefined ? 100 : int(s.stallFood[k], 0, 100);
       const x = STALL.x1 + 2 + Math.random() * (STALL.x2 - STALL.x1 - 4), z = STALL.z1 + 2 + Math.random() * (STALL.z2 - STALL.z1 - 4);
       const a = makeAnimalEntity(type, x, z);
-      Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'stall', prodT: PRODUCE[type][1] / 2 });
+      Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'stall', prodT: PRODUCE[type][1] / 2, food, starve: 0 });
       animals.push(a);
-    }
+    });
+    if (s.trough !== undefined) { farm.trough = int(s.trough, 0, TROUGH_MAX); showTrough(farm.trough); }
+    applyFieldKey(s.field);
     // Gegrabene Höhlen (ältere Spielstände hatten noch keine)
     MASSIFS.forEach((M, k) => applyDugKey(M, typeof s.rock?.[k] === 'string' ? s.rock[k].slice(0, 200) : ''));
     rockVer++;
@@ -2583,7 +2780,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -2622,6 +2819,7 @@ function step(dt) {
       spawnApples(dt);
       spawnMaterials(dt);
       updateBuildLogic(dt);
+      if (kid) { updateHunger(dt); growField(dt); }
       updateTrees(dt);
       updateCaves(dt);
       updateCages(dt);

@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
+import { VILLAGES, LAKE, PATHS, PATH_W, FIELD, BAKERY } from './map.js';
 import { WORLD } from './util.js';
 
 const f1 = (v) => v.toFixed(1);
@@ -7,6 +7,8 @@ const f1 = (v) => v.toFixed(1);
 const EXTRA_MASK = [
   ...PATHS.map(([x1, z1, x2, z2]) => `if (segD(p, vec2(${f1(x1)}, ${f1(z1)}), vec2(${f1(x2)}, ${f1(z2)})) < ${f1(PATH_W / 2 + 0.2)}) return 0.0;`),
   ...VILLAGES.map((v) => `if (length(p - vec2(${f1(v.x)}, ${f1(v.z)})) < 11.0) return 0.0;`),
+  `if (p.x > ${f1(FIELD.x1 - 0.5)} && p.x < ${f1(FIELD.x2 + 0.5)} && p.y > ${f1(FIELD.z1 - 0.5)} && p.y < ${f1(FIELD.z2 + 0.5)}) return 0.0;`,
+  `if (abs(p.x - ${f1(BAKERY.x)}) < 4.0 && abs(p.y - ${f1(BAKERY.z)}) < 3.5) return 0.0;`,
   `if (length(p - vec2(${f1(LAKE.x)}, ${f1(LAKE.z)})) < ${f1(LAKE.r + 2)}) return 0.0;`,
 ].join('\n  ');
 
@@ -40,7 +42,7 @@ float grassMask(vec2 p) {
   }
   ${EXTRA_MASK}
   if (abs(p.x) < 3.4 && p.y > -83.0 && p.y < 71.0) return 0.0;
-  if (p.x > -28.3 && p.x < -9.0 && p.y > 53.0 && p.y < 67.0) return 0.0;
+  if (p.x > -28.3 && p.x < -9.0 && p.y > 53.0 && p.y < 72.5) return 0.0;
   if (p.x > 16.0 && p.x < 32.0 && p.y > 64.0 && p.y < 80.0) return 0.0;
   if (abs(p.x - 8.0) < 2.4 && abs(p.y - 62.0) < 2.4) return 0.0;
   if (length(p - vec2(52.0, 38.0)) < 10.8) return 0.0;

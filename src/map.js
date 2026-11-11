@@ -32,3 +32,9 @@ export function pathDist(x, z) {
 
 export const nearVillage = (x, z, extra = 0) =>
   VILLAGES.some((v) => Math.hypot(x - v.x, z - v.z) < v.r + extra) || Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r + 3 + extra;
+
+// Bauernhof: Getreidefeld östlich vom Stall und Platz für die Bäckerei dahinter
+export const FIELD = { x1: 40, x2: 50, z1: 66, z2: 80 };
+export const BAKERY = { x: 45, z: 88 };
+export const nearFarm = (x, z, extra = 0) =>
+  (x > FIELD.x1 - 2 - extra && x < FIELD.x2 + 6 + extra && z > FIELD.z1 - 4 - extra && z < BAKERY.z + 4 + extra);

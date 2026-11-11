@@ -4,7 +4,7 @@ import { mergeGeometries } from '../lib/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 import { addWallWalk } from './castlewalk.js';
-import { PATHS, PATH_W, pathDist, nearVillage } from './map.js';
+import { PATHS, PATH_W, pathDist, nearVillage, nearFarm } from './map.js';
 
 export const HOME = { x: 0, z: 80 };
 export const ENEMY_CASTLE = { x: 0, z: -100 };
@@ -216,7 +216,8 @@ function addStall(scene) {
     for (let t = 0; t <= len; t += 2) scene.add(mesh(post, wood, ax + ((bx - ax) * t) / len, 0.55, az + ((bz - az) * t) / len));
   };
   rail(x1, z1, x2, z1);
-  rail(x2, z1, x2, z2);
+  rail(x2, z1, x2, 69);        // Tor zum Getreidefeld
+  rail(x2, 75, x2, z2);
   rail(x1, z2, x2, z2);
   rail(x1, z1, x1, 69);        // Tor zur Burg hin offen lassen
   rail(x1, 75, x1, z2);
@@ -249,9 +250,10 @@ export const freeSpot = (x, z) =>
     (Math.abs(x) < 18 && Math.abs(z - HOME.z) < 18) ||              // eure Burg
     (Math.abs(x) < 10 && z > 55 && z < 70) ||                       // Platz vor eurer Burg
     (x > 10 && x < 38 && z > 56 && z < 92) ||                       // Stall
-    (x > -28 && x < -6 && z > 44 && z < 72) ||                      // Werkstatt
+    (x > -28 && x < -6 && z > 44 && z < 75) ||                      // Werkstatt
     (Math.abs(x) < 42 && z < -38 && z > -125) ||                    // Dorf und feindliche Burg
     Math.hypot(x - 52, z - 38) < 13 ||                              // Teich
+    nearFarm(x, z) ||                                               // Getreidefeld und Bäckerei
     nearVillage(x, z, 4) || pathDist(x, z) < PATH_W);               // neue Dörfer und Wege dorthin
 
 export function randomFreeSpot() {
