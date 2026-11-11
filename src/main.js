@@ -16,8 +16,9 @@ import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRi
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
 let isTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 1 && /Mac|iPad/.test(navigator.platform || navigator.userAgent));
-// Grafik-Sparmodus nur nach der Erkennung beim Start (Handy/Tablet), nicht erst beim ersten Antippen
-const lowGfx = isTouch;
+// Grafik-Sparmodus nach der Erkennung beim Start (Handy/Tablet), nicht erst beim ersten Antippen.
+// Android-Smartboards melden sich als Maus-Gerät, haben aber nur Tablet-Grafik: die bekommen ihn auch.
+const lowGfx = isTouch || /Android/i.test(navigator.userAgent);
 if (isTouch) document.body.classList.add('touch');
 // Smartboards und Touch-Laptops melden sich oft als Maus-Gerät. Sobald jemand den Bildschirm wirklich antippt,
 // schalten wir auf Touch-Bedienung um (Joystick und Knöpfe wie auf dem iPad).

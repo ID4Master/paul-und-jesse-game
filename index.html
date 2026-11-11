@@ -234,7 +234,33 @@
   </div>
 </div>
 
-<script type="module" src="src/main.js"></script>
+<script>
+  // Ersten Fehler merken, damit die Meldung "Browser zu alt" zeigt, woran es genau hängt
+  var kicFirstError = '';
+  window.addEventListener('error', function (e) {
+    if (!kicFirstError) kicFirstError = (e.message || (e.target && e.target.src ? 'Laden fehlgeschlagen: ' + e.target.src : 'Fehler')) +
+      (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '');
+  }, true);
+</script>
+<script>
+  // Moderne Browser laden das Spiel direkt aus src/. Alte Browser (z. B. Chrome 64 auf dem Smartboard) verstehen
+  // manche neue Schreibweisen nicht und bekommen deshalb die umgewandelte Fassung legacy/game.js (tools/build-legacy.sh).
+  (function () {
+    var modern = false;
+    try {
+      new Function('var a = { b: 1 }; a?.b ?? 0; class A { x = 1; static y = 2; #z = 3; }');
+      modern = !!([].flat && Object.fromEntries && 'noModule' in document.createElement('script')) && !/[?&]legacy/.test(location.search);
+    } catch (e) {}
+    var files = modern ? ['src/main.js'] : ['legacy/polyfills.js', 'legacy/game.js'];
+    files.forEach(function (src) {
+      var el = document.createElement('script');
+      if (modern) el.type = 'module';
+      el.src = src;
+      el.async = false;
+      document.body.appendChild(el);
+    });
+  })();
+</script>
 <script>
   // Wenn das Spiel nach ein paar Sekunden nicht gestartet ist, ist der Browser zu alt
   // (z. B. der eingebaute Browser auf älteren Smartboards). Dann sagen wir das, statt nur ein leeres Menü zu zeigen.
@@ -244,7 +270,7 @@
     box.innerHTML = 'Das Spiel kann in diesem Browser nicht starten, weil er zu alt ist. ' +
       'Bitte einen aktuellen Browser nehmen (Chrome, Edge oder Firefox) oder einen Laptop anschließen.' +
       '<small></small>';
-    box.lastChild.textContent = navigator.userAgent;
+    box.lastChild.textContent = navigator.userAgent + (kicFirstError ? ' | ' + kicFirstError : ' | kein Fehler gemeldet');
     box.hidden = false;
   }, 15000);
 </script>
