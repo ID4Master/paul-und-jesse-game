@@ -6,7 +6,9 @@ import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCe
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS, HOUSES, houseAt } from './world.js';
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
-import { BAKERY } from './map.js';
+import { BAKERY, pathDist, nearVillage, nearFarm } from './map.js';
+import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
+import { WORLD } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
@@ -214,15 +216,15 @@ const LOOKS = [
   { pants: 0x4a3a2a, hair: 0xd9b36a, band: 0xef6c00 },
 ];
 const KEYMAPS = {
-  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'] },
+  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'], fort: ['KeyF'] },
   p2: { fwd: ['ArrowUp'], back: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
-        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'] },
+        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'], fort: ['Numpad2', 'Slash', 'Minus'] },
 };
 KEYMAPS.all = Object.fromEntries(Object.keys(KEYMAPS.p1).map((k) => [k, [...KEYMAPS.p1[k], ...KEYMAPS.p2[k]]]));
 const KEY_HINTS = {
-  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln',
-  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln',
-  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln',
+  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung',
+  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung',
+  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung',
 };
 
 // source: 'local' (Tastatur/Touch an diesem Gerät) oder 'remote' (über das Netzwerk)
@@ -271,6 +273,9 @@ function resetPlayer(p) {
 function respawn(p) {
   p.riding = null;
   p.root.position.set(HOME.x + p.startX, 0, HOME.z - 16);
+  // Wer seine Festung aufgestellt hat, fängt dort wieder an
+  const f = forts[p.index];
+  if (f && !f.packed) { const [ox, oz] = rot(f.q, 0, 2); p.root.position.set(f.x + ox, 0, f.z + oz); }
   p.root.visible = true;
   p.h.body.rotation.x = 0;
   p.heading = p.bodyYaw = Math.PI;
@@ -335,6 +340,7 @@ function nearestPlayer(pos, maxDist) {
 
 function hurtPlayer(p, rawDmg) {
   if (p.dead || p.out || p.riding != null) return;
+  if (kid && inAnyFort(p.root.position)) return;   // in einer Festung ist man sicher
   // Bessere Rüstung = weniger Schaden
   const dmg = Math.max(1, Math.round(rawDmg * (1 - 0.08 * p.level)));
   p.hp -= dmg;
@@ -800,6 +806,7 @@ addEventListener('keydown', (e) => {
   if (!started) return;
   if (e.code.startsWith('Arrow') || ['Space', 'Enter', 'ShiftRight', 'ControlRight'].includes(e.code)) e.preventDefault();
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.swap.includes(e.code)) p.swapReq = true;
+  if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.fort?.includes(e.code)) p.fortReq = true;
 });
 addEventListener('keyup', (e) => (keys[e.code] = false));
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -842,7 +849,8 @@ function readLocalInput(p) {
   const atk = $('tAttack');
   atk.addEventListener('pointerdown', (e) => { e.preventDefault(); atk.setPointerCapture(e.pointerId); initAudio(); touchIn.attack = true; });
   // iPad/iPhone: langes Drücken öffnet sonst ein Menü oder die Lupe, dann bricht der Knopf ab
-  for (const el of [atk, $('tSwap'), joy]) {
+  $('tFort').addEventListener('pointerdown', () => { const p = players[me]; if (p) p.fortReq = true; });
+  for (const el of [atk, $('tSwap'), $('tFort'), joy]) {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
   }
@@ -874,6 +882,7 @@ function updatePlayerLogic(p, dt) {
       p.moving = speed > 0 ? 1 : -1;
     }
     if (p.swapReq) swapWeapon(p);
+    if (p.fortReq) { p.fortReq = false; if (kid) fortAction(p); }
     p.cooldown -= dt;
     if (p.holdAtk && !inp.attack) p.holdAtk = false;
     if (inp.attack && p.cooldown <= 0 && !p.holdAtk) attack(p);
@@ -939,7 +948,7 @@ function posePlayer(p, dt) {
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
   if (isTouch && p.index === me) updateAttackButton(p);
-  if (visible(p.index)) drawMinimap(p.index, players, dt, dragonMapMarks());
+  if (visible(p.index)) drawMinimap(p.index, players, dt, [...dragonMapMarks(), ...fortMarks()]);
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist.
   // In einer Höhle geht sie tief unter die Felsdecke und bleibt im Gang.
@@ -1343,7 +1352,7 @@ const PLAYER_FULL = 420;
 function updateHunger(dt) {
   for (const p of alivePlayers()) {
     if (p.food === undefined) p.food = 100;
-    p.food = Math.max(0, p.food - (100 / PLAYER_FULL) * dt);
+    if (!inAnyFort(p.root.position)) p.food = Math.max(0, p.food - (100 / PLAYER_FULL) * dt);   // in der eigenen Festung wird man nicht hungrig
     if (p.food <= 0 && p.hp > 30) p.hp = Math.max(30, p.hp - dt);
     if (p.food < 20 && (p.hungerHintT || 0) < performance.now()) {
       p.hungerHintT = performance.now() + 30000;
@@ -2203,6 +2212,149 @@ function useTool(p) {
   return false;
 }
 
+// ================= Eigene Festung =================
+// Jeder Spieler hat eine Festung. Am Anfang ist sie eingepackt (Bündel auf dem Rücken).
+// F (Spieler 2: -, Touch: 🏰) stellt sie vor einem auf. Drinnen F drücken packt sie wieder ein: so kann man umziehen.
+// In der Mitte ist eine Fläche zum Ausbauen (Kosten aus dem Burglager). In der Festung ist man sicher und satt.
+const forts = [0, 1].map((i) => ({ i, x: 0, z: 0, q: 0, level: 1, packed: true, model: null, boxes: [], pad: null, hintCd: 0, key: '' }));
+const fortPads = forts.map((f) => {
+  const pad = makePad('#ffd54f');
+  pad.visible = false;
+  scene.add(pad);
+  return pad;
+});
+const bundles = [];
+
+function showFort(f) {
+  const key = [f.x, f.z, f.q, f.level, f.packed].join('|');
+  if (key === f.key) return;
+  f.key = key;
+  if (f.model) { scene.remove(f.model); f.model = null; }
+  for (const b of f.boxes) boxes.splice(boxes.indexOf(b), 1);
+  f.boxes = [];
+  if (!f.packed) {
+    f.model = makeFortModel(f.level, FORT_COLORS[f.i]);
+    f.model.position.set(f.x, 0, f.z);
+    f.model.rotation.y = f.q * Math.PI / 2;
+    scene.add(f.model);
+    f.boxes = fortBoxes(f);
+    boxes.push(...f.boxes);
+    const [px, pz] = rot(f.q, 0, 1.2);
+    fortPads[f.i].position.set(f.x + px, 0.08, f.z + pz);
+  }
+  grassRects.extra = forts.filter((g) => !g.packed).map((g) => ({ x1: g.x - FORT_HALF, z1: g.z - FORT_HALF, x2: g.x + FORT_HALF, z2: g.z + FORT_HALF }));
+  refreshGrassRects();
+}
+
+// Ist hier Platz für eine Festung? Gibt einen Grund zurück, wenn nicht.
+function fortSpotProblem(f, x, z) {
+  const H = FORT_HALF;
+  if (Math.abs(x) > WORLD - H - 4 || Math.abs(z) > WORLD - H - 4) return 'Hier ist der Rand der Welt.';
+  if (Math.abs(x - HOME.x) < 18 + H && Math.abs(z - HOME.z) < 18 + H) return 'Hier steht schon eure große Burg.';
+  if (Math.abs(x) < 42 + H && z < -38 + H && z > -125 - H) return 'Hier ist das Dorf vor der Schelmen-Burg.';
+  if (nearVillage(x, z, H + 4)) return 'Hier ist ein Dorf.';
+  if (nearFarm(x, z, H) || (x > 10 - H && x < 38 + H && z > 56 - H && z < 92 + H)) return 'Hier sind Stall und Bauernhof.';
+  if (x > -28 - H && x < -6 + H && z > 44 - H && z < 75 + H) return 'Hier ist die Werkstatt.';
+  if (Math.hypot(x - 52, z - 38) < 11 + H) return 'Hier ist der Teich.';
+  if (pathDist(x, z) < H + 2.5) return 'Hier geht ein Weg lang, der muss frei bleiben.';
+  for (const g of forts) if (g !== f && !g.packed && Math.max(Math.abs(g.x - x), Math.abs(g.z - z)) < 2 * H + 1) return 'Hier steht schon die andere Festung. Direkt daneben geht es!';
+  for (let px = -H + 0.5; px <= H - 0.5; px += 1.5) {
+    for (let pz = -H + 0.5; pz <= H - 0.5; pz += 1.5) {
+      if (blockedSpot(x + px, z + pz, 0.3)) return 'Hier sind Bäume, Felsen oder Häuser im Weg.';
+    }
+  }
+  return null;
+}
+
+function fortAction(p) {
+  if (p.dead || p.out || p.riding != null) return;
+  const f = forts[p.index], pos = p.root.position;
+  if (f.packed) {
+    // Vor dem Spieler aufstellen, das Tor zeigt zum Spieler
+    const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    const x = pos.x + fx * (FORT_HALF + 2.5), z = pos.z + fz * (FORT_HALF + 2.5);
+    let q = 0, best = -9;
+    for (let k = 0; k < 4; k++) { const [gx, gz] = rot(k, 0, 1); const d = -(gx * fx + gz * fz); if (d > best) { best = d; q = k; } }
+    const problem = fortSpotProblem(f, x, z);
+    if (problem) { fxPlayerMsg(p.index, `🏰 ${problem} Such dir eine freie Wiese für deine Festung!`, 3500); return; }
+    Object.assign(f, { x: Math.round(x * 2) / 2, z: Math.round(z * 2) / 2, q, packed: false });
+    showFort(f);
+    for (let k = 0; k < 10; k++) fxFloat('✨', '#ffd54f', { x: f.x + (Math.random() - 0.5) * 10, z: f.z + (Math.random() - 0.5) * 10 });
+    fxSfx('levelUp');
+    fxPlayerMsg(p.index, `🏰 Deine ${FORT_LEVELS[f.level].name} steht! Hier bist du sicher und bekommst keinen Hunger. In der Mitte kannst du sie ausbauen. Zum Umziehen: hineingehen und nochmal ${p.index && mode === 'local' ? '-' : isTouch ? '🏰' : 'F'} drücken.`, 6000);
+    return;
+  }
+  if (inFort(f, pos.x, pos.z)) {
+    f.packed = true;
+    showFort(f);
+    fxFloat('📦 Eingepackt!', '#ffffff', pos);
+    fxSfx('poof');
+    fxPlayerMsg(p.index, '📦 Festung eingepackt! Lauf dahin, wo du wohnen willst, und stell sie dort wieder auf.', 4000);
+    return;
+  }
+  fxPlayerMsg(p.index, '🏰 Deine Festung steht noch woanders (🚩 auf der Karte). Geh hinein und drück dort, dann packst du sie ein und kannst umziehen.', 4500);
+}
+
+function updateForts(dt) {
+  for (const f of forts) {
+    f.hintCd -= dt;
+    if (f.packed) continue;
+    // Ausbauen: auf die Fläche in der Mitte stellen
+    const next = FORT_LEVELS[f.level + 1];
+    const pad = fortPads[f.i].position;
+    const p = alivePlayers().find((q) => Math.abs(q.root.position.x - pad.x) < 2 && Math.abs(q.root.position.z - pad.z) < 2);
+    f.upCd = (f.upCd || 0) - dt;
+    if (next && p && f.upCd <= 0) {
+      const missing = {};
+      for (const [m, n] of Object.entries(next.cost)) if (store[m] < n) missing[m] = n - store[m];
+      if (Object.keys(missing).length) {
+        if (f.hintCd <= 0) { f.hintCd = 4; fxPlayerMsg(p.index, `Für die ${next.name} fehlt im Burglager noch: ${matText(missing)}`, 3000); }
+      } else {
+        for (const [m, n] of Object.entries(next.cost)) store[m] -= n;
+        f.level++;
+        f.upCd = 4;   // nicht gleich die nächste Stufe hinterher
+        showFort(f);
+        fxSfx('levelUp');
+        fxGlobalMsg(`🏰 Die Festung von ${players[f.i]?.name || 'Spieler ' + (f.i + 1)} ist jetzt eine ${next.name}!`, 4500);
+      }
+    }
+    // Drinnen: Energie kommt schnell zurück
+    for (const q of alivePlayers()) if (inFort(f, q.root.position.x, q.root.position.z)) q.hp = Math.min(100, q.hp + 4 * dt);
+  }
+}
+const inAnyFort = (pos) => forts.some((f) => inFort(f, pos.x, pos.z));
+
+function poseForts(dt) {
+  forts.forEach((f, i) => {
+    const pad = fortPads[i];
+    pad.visible = kid && started && !f.packed;
+    if (pad.visible) {
+      const next = FORT_LEVELS[f.level + 1];
+      drawPad(pad, next
+        ? { icon: '🏰', title: 'Ausbauen', line: matText(next.cost), state: Object.entries(next.cost).every(([m, n]) => store[m] >= n) ? 'ready' : 'normal' }
+        : { icon: '🏰', title: FORT_LEVELS[f.level].name, line: '✔ fertig', state: 'built' });
+    }
+    if (f.model?.userData.flag) f.model.userData.flag.rotation.y = Math.sin(performance.now() / 400 + i) * 0.25;
+    // Bündel auf dem Rücken, solange die Festung eingepackt ist
+    const p = players[i];
+    if (!p) return;
+    if (!bundles[i]) { bundles[i] = makeFortBundle(FORT_COLORS[i]); bundles[i].position.set(0, 1.25, -0.38); p.root.add(bundles[i]); }
+    bundles[i].visible = kid && f.packed && !p.out;
+  });
+}
+const fortMarks = () => forts.filter((f) => !f.packed && players[f.i]).map((f) => ({ icon: '🚩', x: f.x, z: f.z }));
+const fortKey = () => forts.map((f) => [f.x, f.z, f.q, f.level, f.packed ? 1 : 0]);
+function applyFortKey(arr) {
+  if (!Array.isArray(arr)) return;
+  arr.forEach((r, i) => {
+    const f = forts[i];
+    if (!f || !Array.isArray(r)) return;
+    f.x = Number(r[0]) || 0; f.z = Number(r[1]) || 0; f.q = (r[2] | 0) & 3;
+    f.level = Math.max(1, Math.min(FORT_MAX, r[3] | 0)); f.packed = !!r[4];
+    showFort(f);
+  });
+}
+
 // ================= Häuser: hineingehen und aus der Truhe klauen =================
 // In jedem Dorfhaus steht eine Truhe mit Gold 💰 und etwas zu essen. Nach ein paar Minuten ist sie wieder voll.
 const LOOT_REFILL = 180;
@@ -2275,6 +2427,7 @@ function resetWorldStuff() {
   treasures = 0;
   resetField();
   HOUSES.forEach((h) => { h.full = true; h.t = 0; });
+  forts.forEach((f) => { f.packed = true; f.level = 1; showFort(f); });
   farm.trough = 10;
   showTrough(farm.trough);
 }
@@ -2388,6 +2541,7 @@ function buildSnapshot() {
     ts: treasures,
     tr: farm.trough,
     hl: houseKey(),
+    ft: fortKey(),
     wf: fieldKey(),
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
@@ -2467,6 +2621,7 @@ function applySnapshot(s) {
   if (s.tr !== undefined && s.tr !== farm.trough) { farm.trough = s.tr; showTrough(farm.trough); }
   applyFieldKey(s.wf);
   applyHouseKey(s.hl);
+  applyFortKey(s.ft);
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
     seenB.add(id);
@@ -2546,6 +2701,7 @@ function sendInput() {
   const key = JSON.stringify(msg);
   if (key !== lastSent) { conn.send(msg); lastSent = key; }
   if (p.swapReq) { conn.send({ t: 'swap' }); p.swapReq = false; }
+  if (p.fortReq) { conn.send({ t: 'fort' }); p.fortReq = false; }
 }
 
 // ================= Spiel starten =================
@@ -2581,6 +2737,7 @@ function startGame(newMode) {
   }[mode];
   showMsg('msg', text, 4000);
   if (isSim()) later(16, () => fxGlobalMsg('🏘️ Neu: Drei Dörfer zum Entdecken, mit Leuten zum Reden und Rätseln! Der Weg geht zwischen eurer Burg und dem Stall los. Schaut auf die Karte oben rechts!', 7000));
+  if (kid && isSim()) later(5, () => fxGlobalMsg(`🏰 Jeder hat seine eigene Festung im Gepäck! Lauf auf eine freie Wiese und drück ${isTouch ? '🏰' : 'F'}, dann steht sie da.`, 6000));
   if (kid && isSim()) later(75, () => fxGlobalMsg('🏠 Neu: In die Häuser in den Dörfern kann man jetzt hineingehen! Drinnen steht eine Truhe mit Gold 💰. Aber Psst, nicht erwischen lassen!', 7000));
   if (kid && isSim()) later(40, () => fxGlobalMsg('🌾 Neu: Hinter dem Stall wächst Getreide! Mit der Sense mähen, im Stall in den Futtertrog schütten, sonst laufen eure Tiere weg. Und esst genug, sonst bekommt ihr Hunger 🍴!', 8000));
   if (kid && isSim()) later(9, () => { if (!built.axe) fxGlobalMsg('Tipp: Holz gibt es nur noch vom Bäumefällen. Sucht die Axt 🪓 im Wald links neben eurer Burg!', 5000); });
@@ -2631,6 +2788,7 @@ async function hostNet(save) {
           const p2 = players[1];
           if (d.t === 'i') p2.input = { fwd: d.f, turn: d.u, attack: !!d.a };
           if (d.t === 'swap') p2.swapReq = true;
+          if (d.t === 'fort') p2.fortReq = true;
           if (d.t === 'dlg') pickDialog(p2, d.k);
         });
         conn.on('close', () => { stopVoice(); players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
@@ -2685,6 +2843,7 @@ function makeSave() {
       trough: farm.trough,
       field: fieldKey(),
       houses: houseKey(),
+      forts: fortKey(),
       caves: CAVES.map((c) => c.state),
       rock: MASSIFS.map(dugKey),
       treasures,
@@ -2732,6 +2891,8 @@ function applySave(s) {
     if (s.trough !== undefined) { farm.trough = int(s.trough, 0, TROUGH_MAX); showTrough(farm.trough); }
     applyFieldKey(s.field);
     applyHouseKey(s.houses);
+    applyFortKey(s.forts);
+    players.forEach((p) => { if (!forts[p.index].packed) respawn(p); });
     // Gegrabene Höhlen (ältere Spielstände hatten noch keine)
     MASSIFS.forEach((M, k) => applyDugKey(M, typeof s.rock?.[k] === 'string' ? s.rock[k].slice(0, 200) : ''));
     rockVer++;
@@ -2839,7 +3000,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -2878,7 +3039,7 @@ function step(dt) {
       spawnApples(dt);
       spawnMaterials(dt);
       updateBuildLogic(dt);
-      if (kid) { updateHunger(dt); growField(dt); updateHouses(dt); }
+      if (kid) { updateHunger(dt); growField(dt); updateHouses(dt); updateForts(dt); }
       updateTrees(dt);
       updateCaves(dt);
       updateCages(dt);
@@ -2906,6 +3067,7 @@ function step(dt) {
     poseBuilds(dt);
     poseCaves(dt);
     poseHouses(dt);
+    poseForts(dt);
     poseVillages(dt, players);
     poseDragons(dt, isSim());
     updateFallers(dt);
