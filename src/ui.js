@@ -101,7 +101,15 @@ export const sfx = {
 
 // ---------- Nachrichten auf dem Bildschirm ----------
 const timers = {};
+// Alle Hinweise merken, damit man sie unter 💡 Tipps nochmal lesen kann (neueste zuerst, doppelte nur einmal)
+export const msgLog = [];
 export function showMsg(id, text, ms = 2500) {
+  if (text && ms > 2500) {
+    const old = msgLog.indexOf(text);
+    if (old >= 0) msgLog.splice(old, 1);
+    msgLog.unshift(text);
+    if (msgLog.length > 25) msgLog.length = 25;
+  }
   const el = document.getElementById(id);
   el.textContent = text;
   el.style.opacity = 1;

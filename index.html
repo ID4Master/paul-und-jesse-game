@@ -147,6 +147,53 @@
   }
   body.touch .hud .keys { display: none; }
 
+
+  /* ---------- Knöpfe oben rechts: Rucksack, Tipps, Anzeige, Menü ---------- */
+  #topBar { position: fixed; top: 10px; right: 10px; display: none; gap: 6px; z-index: 5; }
+  body.playing #topBar { display: flex; }
+  #topBar button { background: #000a; color: #fff; border: 2px solid #fff8; border-radius: 8px; padding: 6px 10px; font-size: 15px;
+                   touch-action: manipulation; }
+  #topBar #menuBtn { position: static; display: block; }
+  body.full .hud { max-width: calc(100vw - 280px); }
+  /* Fenster für Rucksack, Tipps und Anzeige */
+  .ovl { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center;
+         justify-content: center; padding: 12px; background: #0008; box-sizing: border-box; z-index: 21; }
+  .ovl[hidden] { display: none; }
+  .ovl .panel { max-width: 480px; padding: 18px; text-align: left; }
+  .ovl h1 { font-size: 28px; margin-bottom: 10px; text-align: center; }
+  .ovl h2 { font-size: 17px; color: #ffd54f; margin: 14px 0 6px; }
+  .ovl .howto { margin-top: 8px; opacity: .85; }
+  .slots { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 250px; margin: 0 auto 8px; }
+  .slot { width: 40px; height: 40px; border-radius: 8px; background: #ffffff1a; border: 2px solid #fff4; display: flex;
+          align-items: center; justify-content: center; font-size: 24px; }
+  .slot.empty { opacity: .5; }
+  .rows div { padding: 3px 0; font-size: 17px; }
+  .rows .no { opacity: .55; }
+  .tog { display: flex; align-items: center; width: 100%; margin: 6px 0; padding: 10px 12px; font-size: 17px; font-weight: bold; text-align: left;
+         border: none; border-radius: 10px; background: #ffffff1a; color: #fff; touch-action: manipulation; }
+  .tog::after { content: 'AUS'; margin-left: auto; padding: 3px 10px; border-radius: 8px; background: #555; color: #ddd; font-size: 13px; }
+  .tog.on::after { content: 'AN'; background: #3ecf4a; color: #10301a; }
+  .twoBtns { display: flex; gap: 8px; }
+  .twoBtns button { flex: 1; }
+  #tipLog div { padding: 7px 10px; margin: 5px 0; border-radius: 8px; background: #ffffff14; font-size: 15px; line-height: 1.35; }
+  #tipHelp details { margin: 5px 0; border-radius: 8px; background: #ffffff14; }
+  #tipHelp summary { padding: 9px 10px; font-size: 16px; font-weight: bold; cursor: pointer; }
+  #tipHelp details p { margin: 0; padding: 0 12px 10px; font-size: 15px; line-height: 1.4; }
+  /* Ausgeblendete Teile der Anzeige */
+  body.no-bars .hud .bar, body.no-bars .hud .fbar { display: none; }
+  body.no-stats .hud .info:not(.small) { display: none; }
+  body.no-xp .hud .xp { display: none; }
+  body.no-pack .hud .pack { display: none; }
+  body.no-store #store { display: none; }
+  body.no-keys .hud .keys { display: none; }
+  body.no-map .minimap { display: none !important; }
+  body.no-hud .hud, body.no-hud #store, body.no-hud .minimap { display: none !important; }
+  @media (max-width: 700px) {
+    #topBar { top: 8px; right: 8px; gap: 4px; }
+    #topBar button { padding: 5px 7px; font-size: 13px; }
+    .hud, body.full .hud { max-width: calc(100vw - 190px); }
+  }
+
   /* ---------- Gespräche mit den Dorfbewohnern ---------- */
   .dlg { position: fixed; bottom: 70px; width: 50%; display: flex; flex-direction: column; align-items: center; pointer-events: none;
          box-sizing: border-box; padding: 0 14px; }
@@ -206,7 +253,12 @@
 <div class="pmsg" id="msg0" style="left:0"></div>
 <div class="pmsg" id="msg1" style="left:50%"></div>
 <div id="msg"></div>
-<button id="menuBtn">☰ Menü</button>
+<div id="topBar">
+  <button id="bagBtn" title="Rucksack anschauen (R)">🎒</button>
+  <button id="tipsBtn" title="Tipps nochmal lesen (T)">💡</button>
+  <button id="hudBtn" title="Anzeige ein- und ausblenden (H)">👁️</button>
+  <button id="menuBtn">☰ Menü</button>
+</div>
 <button id="saveBtn" title="Spielstand als Datei speichern">💾 Speichern</button>
 <div id="store" hidden></div>
 
@@ -233,6 +285,41 @@
     <p class="howto" id="wmInfo"></p>
     <div id="wmList"></div>
     <button class="big" id="wmClose">✖ Schließen</button>
+  </div>
+</div>
+
+<div id="bagBox" class="ovl" hidden>
+  <div class="panel">
+    <h1 id="bagTitle">🎒 Rucksack</h1>
+    <div class="slots" id="bagSlots"></div>
+    <div class="rows" id="bagRows"></div>
+    <h2>🛠️ Werkzeuge</h2>
+    <div class="rows" id="bagTools"></div>
+    <h2>🏰 Im Burglager</h2>
+    <div class="rows" id="bagStore"></div>
+    <p class="howto">In den Rucksack passen 10 Sachen. Stell dich auf die Ablagefläche vor eurer Burg, dann kommt alles ins Burglager.</p>
+    <button class="big" id="bagClose">✖ Schließen</button>
+  </div>
+</div>
+
+<div id="tipsBox" class="ovl" hidden>
+  <div class="panel">
+    <h1>💡 Tipps</h1>
+    <h2>Zuletzt angezeigt</h2>
+    <div id="tipLog"></div>
+    <h2>So geht's</h2>
+    <div id="tipHelp"></div>
+    <button class="big" id="tipsClose">✖ Schließen</button>
+  </div>
+</div>
+
+<div id="hudBox" class="ovl" hidden>
+  <div class="panel">
+    <h1>👁️ Anzeige</h1>
+    <p class="howto" style="text-align:center">Tippe an, was du sehen willst.</p>
+    <div id="hudToggles"></div>
+    <div class="twoBtns"><button class="big" id="hudAll">Alles an</button><button class="big" id="hudNone">Alles aus</button></div>
+    <button class="big" id="hudClose">✖ Schließen</button>
   </div>
 </div>
 
@@ -279,7 +366,8 @@
     </div>
     <div class="howto desk">
       Einzelspieler und Internet: W A S D oder Pfeiltasten laufen, Leertaste oder Enter angreifen, Q oder Shift wechseln.<br>
-      Zu zweit an einer Tastatur: Spieler 1 W A S D + Leertaste + Q, Spieler 2 Pfeiltasten + Enter + Shift rechts.
+      Zu zweit an einer Tastatur: Spieler 1 W A S D + Leertaste + Q, Spieler 2 Pfeiltasten + Enter + Shift rechts.<br>
+      Im Spiel: R Rucksack, T Tipps, H Anzeige ein/aus, Esc schließt Fenster.
     </div>
   </div>
 </div>

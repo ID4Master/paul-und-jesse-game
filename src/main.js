@@ -10,7 +10,7 @@ import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECT
 import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
 import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
-import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
+import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
@@ -216,15 +216,15 @@ const LOOKS = [
   { pants: 0x4a3a2a, hair: 0xd9b36a, band: 0xef6c00 },
 ];
 const KEYMAPS = {
-  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'], fort: ['KeyF'], map: ['KeyM'] },
+  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'], fort: ['KeyF'], map: ['KeyM'], bag: ['KeyR'] },
   p2: { fwd: ['ArrowUp'], back: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
-        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'], fort: ['Numpad2', 'Slash', 'Minus'], map: ['Numpad3', 'Period'] },
+        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'], fort: ['Numpad2', 'Slash', 'Minus'], map: ['Numpad3', 'Period'], bag: ['Numpad4', 'Comma'] },
 };
 KEYMAPS.all = Object.fromEntries(Object.keys(KEYMAPS.p1).map((k) => [k, [...KEYMAPS.p1[k], ...KEYMAPS.p2[k]]]));
 const KEY_HINTS = {
-  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung · M Karte',
-  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung · . Karte',
-  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung · M Karte',
+  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · H Anzeige',
+  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung · . Karte · , Rucksack',
+  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · H Anzeige',
 };
 
 // source: 'local' (Tastatur/Touch an diesem Gerät) oder 'remote' (über das Netzwerk)
@@ -808,6 +808,11 @@ addEventListener('keydown', (e) => {
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.swap.includes(e.code)) p.swapReq = true;
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.fort?.includes(e.code)) p.fortReq = true;
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.map?.includes(e.code)) toggleWorldMap(p);
+  if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.bag?.includes(e.code)) toggleBag(p);
+  if (e.repeat) return;
+  if (e.code === 'KeyT' || e.code === 'Numpad5') toggleTips();
+  if (e.code === 'KeyH' || e.code === 'Numpad6') toggleHud();
+  if (e.code === 'Escape') closePanels();
 });
 addEventListener('keyup', (e) => (keys[e.code] = false));
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -2977,6 +2982,138 @@ $('gmInvite').onclick = () => {
   q.set('host', '1');
   location.href = location.pathname + '?' + q.toString();
 };
+
+// ================= Rucksack, Tipps und Anzeige (Knöpfe oben rechts) =================
+// Allein oder zu zweit an einer Tastatur hält ein offenes Fenster das Spiel an, wie das Menü.
+const PANELS = ['bagBox', 'tipsBox', 'hudBox'];
+const panelOpen = () => PANELS.some((id) => !$(id).hidden);
+function closePanels() { PANELS.forEach((id) => ($(id).hidden = true)); $('gameMenu').hidden = true; $('worldMap').hidden = true; }
+function openPanel(id) { PANELS.forEach((x) => ($(x).hidden = x !== id)); }
+const localPlayer = () => players[me] || players[0];
+
+// ---------- Rucksack ----------
+let bagFor = null, bagT = 0;
+function toggleBag(p) {
+  if (!started) return;
+  if (!$('bagBox').hidden && bagFor === p) { $('bagBox').hidden = true; return; }
+  bagFor = p;
+  fillBag(p);
+  openPanel('bagBox');
+}
+function fillBag(p) {
+  $('bagTitle').textContent = mode === 'local' ? `🎒 Rucksack von ${p.name}` : '🎒 Dein Rucksack';
+  const icons = MATERIALS.flatMap((m) => Array(p.pack[m]).fill(MAT_ICON[m]));
+  $('bagSlots').innerHTML = '';
+  for (let k = 0; k < PACK_SIZE; k++) {
+    const d = document.createElement('div');
+    d.className = 'slot' + (icons[k] ? '' : ' empty');
+    d.textContent = icons[k] || '';
+    $('bagSlots').appendChild(d);
+  }
+  const rows = (el, list) => {
+    el.innerHTML = '';
+    for (const [text, have] of list) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      if (!have) d.className = 'no';
+      el.appendChild(d);
+    }
+  };
+  const inPack = MATERIALS.filter((m) => p.pack[m] > 0).map((m) => [`${MAT_ICON[m]} ${MAT_NAME[m]}: ${p.pack[m]}`, true]);
+  rows($('bagRows'), [
+    [`${packCount(p)} von ${PACK_SIZE} Plätzen voll`, true],
+    ...inPack,
+    [`🍎 Äpfel für Tiere: ${p.apples}`, p.apples > 0],
+  ]);
+  rows($('bagTools'), BUILDS.filter((b) => b.tool).map((b) => [`${b.icon} ${b.name}: ${built[b.id] ? 'hast du ✔' : 'noch nicht'}`, !!built[b.id]]));
+  rows($('bagStore'), MATERIALS.map((m) => [`${MAT_ICON[m]} ${MAT_NAME[m]}: ${store[m]}`, store[m] > 0]));
+}
+$('bagBtn').onclick = () => toggleBag(localPlayer());
+$('bagClose').onclick = () => ($('bagBox').hidden = true);
+
+// ---------- Tipps: zuletzt gezeigte Hinweise und Erklärungen ----------
+const HELP = () => [
+  ['🎮 Steuern', isTouch
+    ? 'Links mit dem Kreis laufen. Rechts: 🪄 zaubern, 🔄 Zauber wechseln, 🏰 Festung, 🗺️ Weltkarte. Oben rechts: 🎒 Rucksack, 💡 Tipps, 👁️ Anzeige, ☰ Menü.'
+    : 'W A S D oder Pfeiltasten laufen, Leertaste oder Enter zaubern, Q oder Shift Zauber wechseln, F Festung, M Weltkarte, R Rucksack, T Tipps, H Anzeige ein und aus, Esc schließt ein Fenster.'],
+  ['🪄 Zaubern und Schelme', 'Freche Schelme verzauberst du mit deinem Zauberstab. Je mehr du verzauberst, desto höher dein Level und desto besser deine Rüstung. Leuchtende Sachen am Boden geben dir für kurze Zeit einen Extra-Zauber.'],
+  ['🐾 Tiere befreien', 'Der böse Zauberer hat Tiere in Käfige gesperrt. Befrei sie und bring sie in deinen Stall neben der Burg. Wilde Tiere kommen mit, wenn du sie mit einem Apfel 🍎 fütterst. Sind alle Tiere frei, wird der Zauberer zum Frosch!'],
+  ['🎒 Sammeln und Burglager', `Holz, Steine, Seife, Sternenstaub, Getreide und Gold kommen in deinen Rucksack. Es passen ${PACK_SIZE} Sachen hinein. Auf der Ablagefläche vor eurer Burg fliegt alles ins Burglager.`],
+  ['🔨 Werkstatt', 'Neben der Burg ist die Werkstatt. Jedes Bauwerk hat eine eigene Fläche: draufstellen, und wenn im Burglager genug liegt, wird es gebaut. Leuchtet die Fläche gelb, reicht es schon.'],
+  ['🪓 Werkzeuge', 'Die Axt 🪓 liegt im Wald links neben eurer Burg, die Spitzhacke ⛏️ beim Teich und die Sense 🌾 hinten am Feld. Ihr könnt sie auch in der Werkstatt bauen. Holz gibt es nur vom Bäumefällen.'],
+  ['🍴 Hunger und Bauernhof', 'Wenn du Hunger hast, iss Eier 🥚, Milch 🥛, Äpfel 🍎 oder Brot 🍞. Kühe im Stall geben Milch, Hühner legen Eier. Hinter dem Stall wächst Getreide: mit der Sense mähen und in den Futtertrog schütten, sonst laufen eure Tiere weg. Übriges Getreide im Burglager wird in der Bäckerei zu Brot.'],
+  ['🏘️ Dörfer und Rätsel', 'In den Dörfern könnt ihr mit den Leuten reden. Wo ein ❓ auf der Karte ist, wartet ein Rätsel. In die Häuser kann man hineingehen, drinnen steht eine Truhe mit Gold 💰. Aber Psst, nicht erwischen lassen!'],
+  ['🏰 Eigene Festung', `Lauf auf eine freie Wiese und drück ${isTouch ? '🏰' : 'F'}, dann steht deine Festung da. Drinnen bist du sicher und bekommst keinen Hunger. In der Mitte kannst du sie ausbauen. Zum Umziehen hineingehen und nochmal drücken.`],
+  ['⛰️ Berge und Schätze', 'Die Berge sind aus Felsblöcken. Mit der Spitzhacke ⛏️ haust du Höhlen hinein. In den Bergen sind Schatztruhen 💎 versteckt. Wenn es glitzert, bist du ganz nah!'],
+  ['🗺️ Weltkarte und Reisesteine', `Mit ${isTouch ? '🗺️' : 'M'} siehst du die Weltkarte. Mit jedem Abenteuer (Tiere befreien, Schätze finden, bauen, Rätsel lösen) wird die Welt größer. Auf einem Reisestein (blauer Kreis) könnt ihr in ein anderes Gebiet reisen.`],
+];
+function toggleTips() {
+  if (!started) return;
+  if (!$('tipsBox').hidden) { $('tipsBox').hidden = true; return; }
+  const log = $('tipLog');
+  log.innerHTML = '';
+  if (!msgLog.length) { const d = document.createElement('div'); d.textContent = 'Noch keine Tipps. Spiel einfach los!'; log.appendChild(d); }
+  for (const t of msgLog.slice(0, 12)) { const d = document.createElement('div'); d.textContent = t; log.appendChild(d); }
+  const help = $('tipHelp');
+  help.innerHTML = '';
+  for (const [title, text] of HELP()) {
+    const det = document.createElement('details'), sum = document.createElement('summary'), par = document.createElement('p');
+    sum.textContent = title;
+    par.textContent = text;
+    det.append(sum, par);
+    help.appendChild(det);
+  }
+  openPanel('tipsBox');
+  $('tipsBox').querySelector('.panel').scrollTop = 0;
+}
+$('tipsBtn').onclick = toggleTips;
+$('tipsClose').onclick = () => ($('tipsBox').hidden = true);
+
+// ---------- Anzeige: Teile ein- und ausblenden (wird im Browser gemerkt) ----------
+const HUD_PARTS = [
+  ['bars', '❤️ Leben und Hunger'],
+  ['stats', '⭐ Level, Herzen und Zauber'],
+  ['xp', '🏅 Fortschritt (Äpfel, Tiere, Schätze)'],
+  ['pack', '🎒 Rucksack-Zeile'],
+  ['store', '🏰 Burglager-Zeile'],
+  ['map', '🗺️ Kleine Karte'],
+  ['keys', '⌨️ Tastenhilfe'],
+];
+let hudOff = {};
+try { hudOff = JSON.parse(localStorage.getItem('kic-hud') || '{}') || {}; } catch (e) { hudOff = {}; }
+function applyHud() {
+  for (const [k] of HUD_PARTS) document.body.classList.toggle('no-' + k, !!hudOff[k]);
+  document.body.classList.toggle('no-hud', !!hudOff.all);
+  $('hudBtn').style.opacity = hudOff.all ? 0.6 : 1;
+  try { localStorage.setItem('kic-hud', JSON.stringify(hudOff)); } catch (e) { /* egal */ }
+  for (const b of $('hudToggles').children) b.classList.toggle('on', !hudOff[b.dataset.k] && !hudOff.all);
+}
+for (const [k, label] of HUD_PARTS) {
+  const b = document.createElement('button');
+  b.className = 'tog';
+  b.dataset.k = k;
+  b.textContent = label;
+  if (k === 'keys') b.classList.add('desk');
+  b.onclick = () => {
+    if (hudOff.all) { hudOff = {}; for (const [x] of HUD_PARTS) hudOff[x] = x !== k; }   // alles war aus: nur das hier anmachen
+    else hudOff[k] = !hudOff[k];
+    applyHud();
+  };
+  $('hudToggles').appendChild(b);
+}
+$('hudAll').onclick = () => { hudOff = {}; applyHud(); };
+$('hudNone').onclick = () => { hudOff = { all: true }; applyHud(); };
+$('hudClose').onclick = () => ($('hudBox').hidden = true);
+$('hudBtn').onclick = () => { if ($('hudBox').hidden) openPanel('hudBox'); else $('hudBox').hidden = true; };
+// H: ganze Anzeige schnell weg und wieder da
+function toggleHud() {
+  if (!started) return;
+  hudOff.all = !hudOff.all;
+  applyHud();
+  showMsg('msg', hudOff.all ? 'Anzeige aus. Mit H wieder an.' : 'Anzeige wieder an.', 1500);
+}
+applyHud();
+
 const status = (html) => ($('netStatus').innerHTML = html);
 const netError = (err) => status('😕 Das hat nicht geklappt: ' + (err?.type === 'peer-unavailable' ? 'Code nicht gefunden.' : err?.message || err));
 
@@ -3227,7 +3364,8 @@ function tick() {
   lastFrame = performance.now();
   const dt = Math.min(clock.getDelta(), 0.05);
   // Allein oder zu zweit an einer Tastatur hält das offene Menü das Spiel an
-  if (!(gameMenuOpen() && (mode === 'single' || mode === 'local'))) step(dt);
+  if (!((gameMenuOpen() || panelOpen()) && (mode === 'single' || mode === 'local'))) step(dt);
+  if (bagFor && !$('bagBox').hidden && (bagT -= dt) < 0) { bagT = 0.5; fillBag(bagFor); }   // Rucksack offen: Inhalt aktuell halten
   render();
   requestAnimationFrame(tick);
 }
