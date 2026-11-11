@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
+import { WORLD, bounds, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
 import { mergeGeometries } from '../lib/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
@@ -317,7 +317,7 @@ export const freeSpot = (x, z) =>
 
 export function randomFreeSpot() {
   for (let n = 0; n < 100; n++) {
-    const x = (Math.random() - 0.5) * (WORLD * 2 - 30), z = (Math.random() - 0.5) * (WORLD * 2 - 30);
+    const x = (Math.random() - 0.5) * (bounds.r * 2 - 30), z = (Math.random() - 0.5) * (bounds.r * 2 - 30);
     if (freeSpot(x, z) && !blocked(x, z, 1.5)) return { x, z };
   }
   return { x: 40, z: 50 };

@@ -38,3 +38,22 @@ export const FIELD = { x1: 40, x2: 50, z1: 66, z2: 80 };
 export const BAKERY = { x: 45, z: 88 };
 export const nearFarm = (x, z, extra = 0) =>
   (x > FIELD.x1 - 2 - extra && x < FIELD.x2 + 6 + extra && z > FIELD.z1 - 4 - extra && z < BAKERY.z + 4 + extra);
+
+// Die Welt wächst: so weit kann man auf jeder Stufe gehen (halbe Kantenlänge)
+export const WORLD_LEVELS = [150, 262, 300];
+export const LEVEL_NEED = [0, 3, 7];   // so viele Abenteuer braucht man für die Stufe
+
+// Gebiete der Weltkarte. Jedes hat einen Reisestein; von Stein zu Stein kann man reisen.
+// big: ein Riesenschatz versteckt sich dort (nur in den wilden Gebieten ganz draußen)
+export const SECTORS = [
+  { id: 'burg', name: 'Burgland', icon: '🏰', x: 0, z: 80, sx: 30, sz: 100 },
+  { id: 'schelm', name: 'Schelmenburg', icon: '😈', x: 0, z: -100, sx: 32, sz: -34 },
+  { id: 'teich', name: 'Teichwiesen', icon: '🌊', x: 60, z: 40, sx: 70, sz: 52 },
+  { id: 'muehle', name: 'Mühlbach', icon: '🌾', x: -200, z: -60, sx: -186, sz: 0 },
+  { id: 'see', name: 'Seedorf', icon: '⛵', x: 200, z: -160, sx: 190, sz: -60 },
+  { id: 'huegel', name: 'Hügelhausen', icon: '⛰️', x: 0, z: 220, sx: 9, sz: 185 },
+  { id: 'nebel', name: 'Nebelwald', icon: '🌲', x: -262, z: -262, sx: -256, sz: -250, big: true },
+  { id: 'sonne', name: 'Sonnenhain', icon: '🌻', x: 262, z: 170, sx: 258, sz: 160, big: true },
+];
+// Ab welcher Stufe ist ein Gebiet offen?
+export const sectorLevel = (s) => WORLD_LEVELS.findIndex((r) => Math.max(Math.abs(s.sx), Math.abs(s.sz)) + 8 < r && Math.max(Math.abs(s.x), Math.abs(s.z)) < r + 10);

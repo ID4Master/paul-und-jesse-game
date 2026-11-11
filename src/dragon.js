@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { std, mesh, WORLD } from './util.js';
+import { std, mesh, WORLD, bounds } from './util.js';
 import { HOME, ENEMY_CASTLE, MOUNTAINS } from './world.js';
 import { VILLAGES } from './map.js';
 import { floorAt, TOWER_REL, TOWER_TOP } from './castlewalk.js';
@@ -217,7 +217,7 @@ function landingSpot(x, z) {
   for (let r = 0; r < 22; r += 1.5) {
     for (let a = 0; a < 6.28; a += 0.5) {
       const px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
-      if (Math.abs(px) > WORLD - 6 || Math.abs(pz) > WORLD - 6) continue;
+      if (Math.abs(px) > bounds.r - 6 || Math.abs(pz) > bounds.r - 6) continue;
       // Platz für den Drachen und für den Reiter daneben
       if (floorAt(px, pz, 0) === 0 && floorAt(px + 1.5, pz, 0) === 0 && floorAt(px - 1.5, pz, 0) === 0
         && floorAt(px, pz + 1.5, 0) === 0 && floorAt(px, pz - 1.5, 0) === 0) return { x: px, z: pz };
@@ -288,11 +288,11 @@ export function dragonFly(p, dt) {
     if (d.y < lo) d.y += (lo - d.y) * Math.min(1, dt * 3);   // nie gegen Berge fliegen
     d.x += Math.sin(d.yaw) * SPEED * dt;
     d.z += Math.cos(d.yaw) * SPEED * dt;
-    const lim = WORLD - 8;
+    const lim = bounds.r - 8;
     if (Math.abs(d.x) > lim || Math.abs(d.z) > lim) {
       d.x = Math.max(-lim, Math.min(lim, d.x));
       d.z = Math.max(-lim, Math.min(lim, d.z));
-      if ((p.edgeT || 0) < performance.now()) { p.edgeT = performance.now() + 4000; api.msg(p.index, '🐉 Hier ist die Welt zu Ende. Dreh um!', 2500); }
+      if ((p.edgeT || 0) < performance.now()) { p.edgeT = performance.now() + 4000; api.msg(p.index, bounds.r < WORLD ? '🐉 Hinter dem Nebel ist noch unentdecktes Land. Erlebt mehr Abenteuer, dann wächst die Welt!' : '🐉 Hier ist die Welt zu Ende. Dreh um!', 3000); }
     }
     d.bank += (-turn * 0.32 - d.bank) * Math.min(1, dt * 4);
     d.pitch += (-inp.fwd * 0.3 - d.pitch) * Math.min(1, dt * 4);

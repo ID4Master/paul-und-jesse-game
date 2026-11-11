@@ -6,9 +6,9 @@ import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCe
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS, HOUSES, houseAt } from './world.js';
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
-import { BAKERY, pathDist, nearVillage, nearFarm } from './map.js';
+import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel } from './map.js';
 import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
-import { WORLD } from './util.js';
+import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
@@ -216,15 +216,15 @@ const LOOKS = [
   { pants: 0x4a3a2a, hair: 0xd9b36a, band: 0xef6c00 },
 ];
 const KEYMAPS = {
-  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'], fort: ['KeyF'] },
+  p1: { fwd: ['KeyW'], back: ['KeyS'], left: ['KeyA'], right: ['KeyD'], attack: ['Space'], swap: ['KeyQ', 'KeyE'], fort: ['KeyF'], map: ['KeyM'] },
   p2: { fwd: ['ArrowUp'], back: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],
-        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'], fort: ['Numpad2', 'Slash', 'Minus'] },
+        attack: ['Enter', 'NumpadEnter', 'Numpad0'], swap: ['ShiftRight', 'ControlRight', 'Numpad1'], fort: ['Numpad2', 'Slash', 'Minus'], map: ['Numpad3', 'Period'] },
 };
 KEYMAPS.all = Object.fromEntries(Object.keys(KEYMAPS.p1).map((k) => [k, [...KEYMAPS.p1[k], ...KEYMAPS.p2[k]]]));
 const KEY_HINTS = {
-  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung',
-  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung',
-  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung',
+  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung · M Karte',
+  p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung · . Karte',
+  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung · M Karte',
 };
 
 // source: 'local' (Tastatur/Touch an diesem Gerät) oder 'remote' (über das Netzwerk)
@@ -807,6 +807,7 @@ addEventListener('keydown', (e) => {
   if (e.code.startsWith('Arrow') || ['Space', 'Enter', 'ShiftRight', 'ControlRight'].includes(e.code)) e.preventDefault();
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.swap.includes(e.code)) p.swapReq = true;
   if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.fort?.includes(e.code)) p.fortReq = true;
+  if (!e.repeat) for (const p of players) if (p.source === 'local' && p.keymap.map?.includes(e.code)) toggleWorldMap(p);
 });
 addEventListener('keyup', (e) => (keys[e.code] = false));
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -850,7 +851,8 @@ function readLocalInput(p) {
   atk.addEventListener('pointerdown', (e) => { e.preventDefault(); atk.setPointerCapture(e.pointerId); initAudio(); touchIn.attack = true; });
   // iPad/iPhone: langes Drücken öffnet sonst ein Menü oder die Lupe, dann bricht der Knopf ab
   $('tFort').addEventListener('pointerdown', () => { const p = players[me]; if (p) p.fortReq = true; });
-  for (const el of [atk, $('tSwap'), $('tFort'), joy]) {
+  $('tMap').addEventListener('pointerdown', () => { const p = players[me]; if (p) toggleWorldMap(p); });
+  for (const el of [atk, $('tSwap'), $('tFort'), $('tMap'), joy]) {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
   }
@@ -2212,6 +2214,209 @@ function useTool(p) {
   return false;
 }
 
+// ================= Die Welt wächst: Nebelwand, Gebiete, Reisesteine, Weltkarte =================
+// Am Anfang ist nur das Burgland offen. Mit jedem Abenteuer (Tier befreit, Schatz, Bauwerk, Dorfrätsel,
+// Festung ausgebaut) rückt der Nebel weiter weg, bis die ganze Welt offen ist. Auf jedem Reisestein
+// öffnet sich die Weltkarte: dort kann man in jedes offene Gebiet reisen.
+const worldState = { level: WORLD_LEVELS.length - 1, bigFound: {} };
+const adventures = () => freed + treasures + solvedCount() + Object.keys(built).filter((k) => built[k]).length + forts.filter((f) => f.level > 1).length;
+const sectorOpen = (s) => sectorLevel(s) <= worldState.level;
+
+// Nebelwand: vier hohe, weiche Wände am Rand des offenen Gebiets
+const fogWalls = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 4; cv.height = 128;
+  const ctx = cv.getContext('2d');
+  const gr = ctx.createLinearGradient(0, 0, 0, 128);
+  gr.addColorStop(0, 'rgba(235,240,245,0)');
+  gr.addColorStop(0.45, 'rgba(235,240,245,0.75)');
+  gr.addColorStop(1, 'rgba(235,240,245,0.92)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, 0, 4, 128);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  return [0, 1, 2, 3].map((k) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 40), mat);
+    m.rotation.y = (k * Math.PI) / 2;
+    m.renderOrder = 5;
+    m.visible = false;
+    scene.add(m);
+    return m;
+  });
+})();
+
+// Reisesteine: leuchtender Kreis mit einem Runenstein daneben
+const stones = SECTORS.map((s, i) => {
+  const spot = freeNear(s.sx, s.sz);
+  const g = new THREE.Group();
+  g.position.set(spot.x, 0, spot.z);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.7, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x80deea, transparent: true, opacity: 0.85 }));
+  ring.position.y = 0.07;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1.2, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x26c6da, transparent: true, opacity: 0.35 }));
+  disc.position.y = 0.06;
+  const rune = mesh(new THREE.BoxGeometry(0.7, 2.2, 0.5), std(0x8e9aa6, { emissive: 0x1a6f80, emissiveIntensity: 0.4 }), 2.3, 1.1, 0);
+  rune.rotation.y = 0.3;
+  g.add(ring, disc, rune);
+  scene.add(g);
+  circles.push({ x: spot.x + 2.3, z: spot.z, r: 0.5 });
+  let big = null;
+  if (s.big) {
+    // Riesenschatz im wilden Gebiet
+    const bs = freeNear(s.x, s.z);
+    big = new THREE.Group();
+    big.position.set(bs.x, 0, bs.z);
+    big.add(mesh(new THREE.BoxGeometry(1.8, 1.0, 1.1), std(0x8d5a2b), 0, 0.5, 0));
+    big.add(mesh(new THREE.BoxGeometry(1.85, 0.3, 1.15), std(0x6d4320), 0, 1.15, 0));
+    big.add(mesh(new THREE.BoxGeometry(0.3, 0.3, 0.06), metal(0xd4af37), 0, 0.9, 0.57));
+    const glow = mesh(new THREE.OctahedronGeometry(0.4), new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xffb300, emissiveIntensity: 1.5 }), 0, 2.2, 0);
+    big.add(glow);
+    big.userData.glow = glow;
+    scene.add(big);
+    circles.push({ x: bs.x, z: bs.z, r: 1.0 });
+  }
+  return { s, i, g, x: spot.x, z: spot.z, ring, big };
+});
+
+function setWorldLevel(level) {
+  worldState.level = Math.max(0, Math.min(WORLD_LEVELS.length - 1, level));
+  const r = WORLD_LEVELS[worldState.level];
+  bounds.r = r;
+  const open = r < WORLD;
+  fogWalls.forEach((m, k) => {
+    m.visible = open;
+    m.scale.x = r * 2;
+    const [x, z] = [[0, -r], [r, 0], [0, r], [-r, 0]][k];
+    m.position.set(x, 20, z);
+  });
+  stones.forEach((st) => { st.g.visible = sectorOpen(st.s); });
+  if (!$('worldMap').hidden) drawWorldMap();
+}
+
+function updateWorldGrowth() {
+  // Abenteuer zählen: reichen sie für die nächste Stufe?
+  const a = adventures();
+  let lvl = worldState.level;
+  while (lvl + 1 < WORLD_LEVELS.length && a >= LEVEL_NEED[lvl + 1]) lvl++;
+  if (lvl > worldState.level) {
+    const before = worldState.level;
+    setWorldLevel(lvl);
+    const fresh = SECTORS.filter((s) => sectorLevel(s) > before && sectorLevel(s) <= lvl).map((s) => `${s.icon} ${s.name}`).join(', ');
+    fxGlobalMsg(`🗺️ Die Welt ist gewachsen! Der Nebel ist weg, neue Gebiete: ${fresh}. Schaut auf die Weltkarte!`, 7000);
+    fxSfx('levelUp');
+  }
+  // Riesenschätze
+  for (const st of stones) {
+    if (!st.big || worldState.bigFound[st.s.id] || !sectorOpen(st.s)) continue;
+    const b = st.big.position;
+    const p = alivePlayers().find((q) => Math.hypot(q.root.position.x - b.x, q.root.position.z - b.z) < 2.2);
+    if (!p) continue;
+    worldState.bigFound[st.s.id] = true;
+    for (let k = 0; k < 6; k++) dropItem('gold', { x: b.x + (k - 2.5) * 0.7, z: b.z + 1.8 });
+    for (const t of ['star', 'star', 'life', 'bread']) dropItem(t, { x: b.x + (Math.random() - 0.5) * 3, z: b.z + 2.8 });
+    fxGlobalMsg(`👑 Riesenschatz in ${st.s.name} gefunden! Gold, Sternenstaub und ein Extra-Leben!`, 5000);
+    fxSfx('levelUp');
+  }
+}
+
+function poseStones() {
+  const t = performance.now() / 1000;
+  for (const st of stones) {
+    st.ring.material.opacity = 0.6 + Math.sin(t * 3 + st.i) * 0.25;
+    if (st.big) {
+      const glow = st.big.userData.glow;
+      glow.visible = !worldState.bigFound[st.s.id];
+      glow.rotation.y = t * 2;
+      glow.position.y = 2.2 + Math.sin(t * 2) * 0.2;
+    }
+  }
+  // Wer auf einen Reisestein tritt, bekommt die Weltkarte
+  for (const p of players) {
+    if (!visible(p.index) || p.out || p.dead) continue;
+    const on = stoneUnder(p);
+    if (on && p.onStone !== on.i) openWorldMap(p, on);
+    p.onStone = on ? on.i : -1;
+  }
+}
+const stoneUnder = (p, r = 1.7) => stones.find((st) => st.g.visible && Math.hypot(p.root.position.x - st.x, p.root.position.z - st.z) < r);
+
+// ---------- Weltkarte ----------
+let mapFor = null, mapStone = null;
+function toggleWorldMap(p) {
+  if (!kid || !started) return;
+  if (!$('worldMap').hidden && mapFor === p) { $('worldMap').hidden = true; return; }
+  openWorldMap(p, stoneUnder(p) || null);
+}
+function openWorldMap(p, stone) {
+  mapFor = p;
+  mapStone = stone;
+  $('worldMap').hidden = false;
+  drawWorldMap();
+}
+$('wmClose').onclick = () => { $('worldMap').hidden = true; };
+
+function drawWorldMap() {
+  const cv = $('wmCanvas'), ctx = cv.getContext('2d'), S = cv.width;
+  const k = S / (2 * WORLD), toMap = (x, z) => [(x + WORLD) * k, (z + WORLD) * k];
+  // Nebel über allem, was noch nicht offen ist
+  const r = bounds.r;
+  ctx.fillStyle = '#c9ced6';
+  ctx.fillRect(0, 0, S, S);
+  ctx.fillStyle = '#4f8a43';
+  const [ox, oz] = toMap(-r, -r);
+  ctx.fillRect(ox, oz, 2 * r * k, 2 * r * k);
+  ctx.textAlign = 'center';
+  for (const st of stones) {
+    const open = sectorOpen(st.s);
+    const [sx, sy] = toMap(st.s.x, st.s.z), mx = Math.max(36, Math.min(S - 36, sx)), my = Math.max(14, Math.min(S - 24, sy));
+    ctx.globalAlpha = open ? 1 : 0.55;
+    ctx.font = '20px sans-serif';
+    ctx.fillText(open ? st.s.icon : '🔒', mx, my + 7);
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = open ? '#fff' : '#334';
+    ctx.fillText(st.s.name, mx, my + 21);
+    ctx.globalAlpha = 1;
+  }
+  ctx.font = '16px sans-serif';
+  forts.forEach((f) => { if (!f.packed && players[f.i]) { const [mx, my] = toMap(f.x, f.z); ctx.fillText('🚩', mx, my + 6); } });
+  players.forEach((q, i) => {
+    const [mx, my] = toMap(q.root.position.x, q.root.position.z);
+    ctx.fillStyle = i ? '#ef6c00' : '#1e63d6';
+    ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  });
+  const a = adventures(), next = LEVEL_NEED[worldState.level + 1];
+  $('wmInfo').textContent = (next !== undefined
+    ? `🧭 ${a} von ${next} Abenteuern, dann wächst die Welt weiter! (Tiere befreien, Schätze finden, bauen, Rätsel lösen)`
+    : '🧭 Die ganze Welt ist entdeckt!')
+    + (mapStone ? ' Wohin wollt ihr reisen?' : ' Reisen geht nur auf einem Reisestein (blauer Kreis).');
+  const list = $('wmList');
+  list.innerHTML = '';
+  for (const st of stones) {
+    const b = document.createElement('button');
+    const open = sectorOpen(st.s);
+    b.textContent = open ? `${st.s.icon} ${st.s.name}` : `🔒 ${st.s.name}`;
+    b.disabled = !open || !mapStone || mapStone === st;
+    b.onclick = () => {
+      $('worldMap').hidden = true;
+      if (mode === 'client') { if (conn && conn.open) conn.send({ t: 'travel', s: st.i }); }
+      else travelTo(mapFor, st.i);
+    };
+    list.appendChild(b);
+  }
+}
+
+function travelTo(p, i) {
+  const st = stones[i];
+  if (!p || !st || !sectorOpen(st.s) || p.dead || p.out || p.riding != null) return;
+  if (!stoneUnder(p, 2.5)) return;   // nur von einem Reisestein aus
+  for (let k = 0; k < 5; k++) fxFloat('✨', '#80deea', { x: p.root.position.x + (Math.random() - 0.5) * 2, z: p.root.position.z + (Math.random() - 0.5) * 2 });
+  p.root.position.set(st.x, 0, st.z - 2.6);
+  p.onStone = -1;
+  p.camInit = false;
+  fxSfx('magic');
+  fxPlayerMsg(p.index, `${st.s.icon} Willkommen in ${st.s.name}!`, 2500);
+}
+
 // ================= Eigene Festung =================
 // Jeder Spieler hat eine Festung. Am Anfang ist sie eingepackt (Bündel auf dem Rücken).
 // F (Spieler 2: -, Touch: 🏰) stellt sie vor einem auf. Drinnen F drücken packt sie wieder ein: so kann man umziehen.
@@ -2249,7 +2454,7 @@ function showFort(f) {
 // Ist hier Platz für eine Festung? Gibt einen Grund zurück, wenn nicht.
 function fortSpotProblem(f, x, z) {
   const H = FORT_HALF;
-  if (Math.abs(x) > WORLD - H - 4 || Math.abs(z) > WORLD - H - 4) return 'Hier ist der Rand der Welt.';
+  if (Math.abs(x) > bounds.r - H - 4 || Math.abs(z) > bounds.r - H - 4) return 'Hier ist der Rand der Welt.';
   if (Math.abs(x - HOME.x) < 18 + H && Math.abs(z - HOME.z) < 18 + H) return 'Hier steht schon eure große Burg.';
   if (Math.abs(x) < 42 + H && z < -38 + H && z > -125 - H) return 'Hier ist das Dorf vor der Schelmen-Burg.';
   if (nearVillage(x, z, H + 4)) return 'Hier ist ein Dorf.';
@@ -2428,6 +2633,8 @@ function resetWorldStuff() {
   resetField();
   HOUSES.forEach((h) => { h.full = true; h.t = 0; });
   forts.forEach((f) => { f.packed = true; f.level = 1; showFort(f); });
+  worldState.bigFound = {};
+  setWorldLevel(0);
   farm.trough = 10;
   showTrough(farm.trough);
 }
@@ -2542,6 +2749,7 @@ function buildSnapshot() {
     tr: farm.trough,
     hl: houseKey(),
     ft: fortKey(),
+    wl: [worldState.level, Object.keys(worldState.bigFound)],
     wf: fieldKey(),
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
@@ -2622,6 +2830,7 @@ function applySnapshot(s) {
   applyFieldKey(s.wf);
   applyHouseKey(s.hl);
   applyFortKey(s.ft);
+  if (s.wl) { if (s.wl[0] !== worldState.level) setWorldLevel(s.wl[0]); worldState.bigFound = Object.fromEntries((s.wl[1] || []).map((id) => [id, true])); }
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
     seenB.add(id);
@@ -2718,6 +2927,7 @@ function startGame(newMode) {
   players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
   [0, 1].forEach((i) => showMinimap(i, !!players[i] && visible(i)));
   if (mode !== 'local') players[me].hud.appendChild($('store'));
+  if (kid) setWorldLevel(0);   // neue Welt: nur das Burgland ist offen (ein Spielstand stellt die Stufe danach wieder her)
   if (isSim()) {
     spawnAllEnemies();
     if (kid) spawnKidWorld();
@@ -2789,6 +2999,7 @@ async function hostNet(save) {
           if (d.t === 'i') p2.input = { fwd: d.f, turn: d.u, attack: !!d.a };
           if (d.t === 'swap') p2.swapReq = true;
           if (d.t === 'fort') p2.fortReq = true;
+          if (d.t === 'travel') travelTo(p2, d.s | 0);
           if (d.t === 'dlg') pickDialog(p2, d.k);
         });
         conn.on('close', () => { stopVoice(); players[1].input = { fwd: 0, turn: 0, attack: false }; showMsg('msg', 'Dein Mitspieler ist weg.', 4000); });
@@ -2844,6 +3055,7 @@ function makeSave() {
       field: fieldKey(),
       houses: houseKey(),
       forts: fortKey(),
+      world: { level: worldState.level, big: Object.keys(worldState.bigFound) },
       caves: CAVES.map((c) => c.state),
       rock: MASSIFS.map(dugKey),
       treasures,
@@ -2892,6 +3104,9 @@ function applySave(s) {
     applyFieldKey(s.field);
     applyHouseKey(s.houses);
     applyFortKey(s.forts);
+    // Ältere Spielstände: die Welt war schon ganz offen
+    setWorldLevel(s.world ? int(s.world.level, 0, WORLD_LEVELS.length - 1) : WORLD_LEVELS.length - 1);
+    worldState.bigFound = Object.fromEntries((s.world?.big || []).filter((id) => SECTORS.some((x) => x.id === id)).map((id) => [id, true]));
     players.forEach((p) => { if (!forts[p.index].packed) respawn(p); });
     // Gegrabene Höhlen (ältere Spielstände hatten noch keine)
     MASSIFS.forEach((M, k) => applyDugKey(M, typeof s.rock?.[k] === 'string' ? s.rock[k].slice(0, 200) : ''));
@@ -3000,7 +3215,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, worldState, setWorldLevel, stones, travelTo, adventures, get treasures() { return treasures; } };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -3039,7 +3254,7 @@ function step(dt) {
       spawnApples(dt);
       spawnMaterials(dt);
       updateBuildLogic(dt);
-      if (kid) { updateHunger(dt); growField(dt); updateHouses(dt); updateForts(dt); }
+      if (kid) { updateHunger(dt); growField(dt); updateHouses(dt); updateForts(dt); updateWorldGrowth(); }
       updateTrees(dt);
       updateCaves(dt);
       updateCages(dt);
@@ -3068,6 +3283,7 @@ function step(dt) {
     poseCaves(dt);
     poseHouses(dt);
     poseForts(dt);
+    if (kid) poseStones(dt);
     poseVillages(dt, players);
     poseDragons(dt, isSim());
     updateFallers(dt);

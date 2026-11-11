@@ -81,6 +81,18 @@
   #gameMenu { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center;
               justify-content: center; padding: 16px; background: #0008; box-sizing: border-box; z-index: 20; }
   #gameMenu[hidden] { display: none; }
+  #worldMap { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center;
+              justify-content: center; padding: 12px; background: #0006; box-sizing: border-box; z-index: 19; }
+  #worldMap[hidden] { display: none; }
+  #worldMap .panel { padding: 16px; max-height: 100%; overflow-y: auto; box-sizing: border-box; }
+  #worldMap h1 { font-size: 26px; margin-bottom: 8px; }
+  #wmCanvas { position: static; display: block; margin: 0 auto; width: 240px; height: 240px; border-radius: 10px; border: 2px solid #fff6; }
+  #wmInfo { margin: 6px 0; }
+  #wmList button { display: inline-block; margin: 3px; padding: 8px 10px; font-size: 15px; font-weight: bold; border: none; border-radius: 8px;
+                   background: #ffd54f; color: #1b2a3a; }
+  #wmList button[disabled] { background: #556; color: #bbb; }
+  #wmClose { margin-top: 10px !important; }
+  #tMap { right: 210px; bottom: 24px; width: 64px; height: 64px; font-size: 28px; }
   #gameMenu h1 { font-size: 30px; margin-bottom: 12px; }
   .panel { width: 100%; max-width: 440px; background: #1b2a3aee; color: #fff; border-radius: 16px; padding: 24px;
            box-shadow: 0 10px 40px #0008; text-align: center; box-sizing: border-box; max-height: 100%; overflow: auto; }
@@ -162,6 +174,7 @@
   body.split #map0 { right: calc(50% + 12px); top: 10px; }
   body.split #map1 { top: 96px; }
   @media (max-width: 700px) { .minimap { top: 80px; right: 8px; width: 100px; height: 100px; } }
+  @media (max-height: 560px) { #wmCanvas { width: 150px; height: 150px; } #worldMap h1 { font-size: 20px; margin-bottom: 4px; } }
 </style>
 </head>
 <body>
@@ -210,6 +223,17 @@
   <button class="tbtn" id="tAttack">⚔️</button>
   <button class="tbtn" id="tSwap">🔄</button>
   <button class="tbtn" id="tFort">🏰</button>
+  <button class="tbtn" id="tMap">🗺️</button>
+</div>
+
+<div id="worldMap" hidden>
+  <div class="panel">
+    <h1>🗺️ Weltkarte</h1>
+    <canvas id="wmCanvas" width="300" height="300"></canvas>
+    <p class="howto" id="wmInfo"></p>
+    <div id="wmList"></div>
+    <button class="big" id="wmClose">✖ Schließen</button>
+  </div>
 </div>
 
 <div id="gameMenu" hidden>

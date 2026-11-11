@@ -1,6 +1,8 @@
 import * as THREE from '../lib/three.module.js';
 
 export const WORLD = 300;   // halbe Kantenlänge der Welt (doppelt so groß wie früher)
+// Wie weit man gerade gehen kann: die Welt wächst im Spiel (Nebelwand am Rand), höchstens bis WORLD
+export const bounds = { r: WORLD };
 
 // Zufall mit festem Startwert, damit die Welt immer gleich aussieht
 let seed = 42;
@@ -34,7 +36,7 @@ export const boxes = [];
 export const blockers = [];
 
 export function blocked(x, z, r) {
-  if (Math.abs(x) > WORLD - 2 || Math.abs(z) > WORLD - 2) return true;
+  if (Math.abs(x) > bounds.r - 2 || Math.abs(z) > bounds.r - 2) return true;
   for (const c of circles) {
     const dx = x - c.x, dz = z - c.z;
     if (dx * dx + dz * dz < (c.r + r) ** 2) return true;
@@ -49,7 +51,7 @@ export function blocked(x, z, r) {
 // Nur große feste Dinge (Mauern, Häuser, Türme, Berge), nicht Bäume.
 // Wichtig für Kamera und Pfeile.
 export function solidAt(x, z) {
-  if (Math.abs(x) > WORLD || Math.abs(z) > WORLD) return true;
+  if (Math.abs(x) > bounds.r || Math.abs(z) > bounds.r) return true;
   for (const b of boxes) {
     if (x > b.x1 && x < b.x2 && z > b.z1 && z < b.z2) return true;
   }
