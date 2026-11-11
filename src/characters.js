@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { std, metal, mesh } from './util.js';
 
 const geos = {

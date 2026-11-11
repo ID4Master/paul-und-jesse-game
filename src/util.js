@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 
 export const WORLD = 300;   // halbe Kantenlänge der Welt (doppelt so groß wie früher)
 

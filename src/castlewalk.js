@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { std, mesh, blocked, boxes } from './util.js';
 import { brickTex } from './textures.js';
 

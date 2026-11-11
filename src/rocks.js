@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { std, circles, blockers } from './util.js';
 import { TREES, ROCKS, setTreeVisible } from './world.js';
 

@@ -16,8 +16,8 @@
   .hud .name { font-size: 20px; font-weight: bold; }
   .hud .keys { display: block; font-size: 12px; font-weight: normal; opacity: .85; }
   .bar { position: relative; width: 240px; height: 20px; margin-top: 4px; background: #000a; border: 2px solid #fff; border-radius: 6px; overflow: hidden; }
-  .fill { position: absolute; inset: 0; width: 100%; background: #3ecf4a; transition: width .15s, background .3s; }
-  .hpnum { position: absolute; inset: 0; text-align: center; font-size: 14px; font-weight: bold; line-height: 20px; }
+  .fill { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; background: #3ecf4a; transition: width .15s, background .3s; }
+  .hpnum { position: absolute; top: 0; right: 0; bottom: 0; left: 0; text-align: center; font-size: 14px; font-weight: bold; line-height: 20px; }
   .info { margin-top: 3px; font-size: 16px; }
   .info .level { font-weight: bold; }
   .info.small { font-size: 13px; opacity: .9; }
@@ -42,6 +42,9 @@
   body.client #saveBtn { display: none; }
   #saveBox[hidden] { display: none; }
   #saveInfo { margin: -4px 0 6px; }
+  #oldBrowser { background: #b3261e; color: #fff; border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-size: 15px; line-height: 1.4; }
+  #oldBrowser[hidden] { display: none; }
+  #oldBrowser small { display: block; margin-top: 6px; opacity: .8; font-size: 11px; word-break: break-all; }
 
   /* Ein Bildschirm statt zwei (Einzelspieler, Netzwerk, Handy) */
   body.full .half, body.full .pmsg { width: 100%; left: 0 !important; }
@@ -69,7 +72,7 @@
   #voice button[hidden] { display: none; }
 
   /* ---------- Startmenü ---------- */
-  #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
+  #menu { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px;
           background: linear-gradient(180deg, #0008, #0004 40%, #0008); box-sizing: border-box; }
   body.playing #menu { display: none; }
   .panel { width: 100%; max-width: 440px; background: #1b2a3aee; color: #fff; border-radius: 16px; padding: 24px;
@@ -200,13 +203,14 @@
   <div class="panel">
     <h1>Knights in Castles</h1>
     <p class="sub" id="menuSub"></p>
+    <div id="oldBrowser" hidden></div>
     <p class="howto kidhint" id="kidHint"></p>
     <div id="menuMain">
       <div id="saveBox" hidden>
         <button class="big" id="btnContinue">▶ Weiterspielen</button>
         <p class="howto" id="saveInfo"></p>
       </div>
-      <button class="big" id="btnSingle">🧑‍🌾 Einzelspieler</button>
+      <button class="big" id="btnSingle">👤 Einzelspieler</button>
       <button class="big desk" id="btnLocal">👥 Zu zweit an einer Tastatur</button>
       <button class="big desk" id="btnNet">🌐 Zu zweit übers Internet</button>
       <p class="mobileOnly howto">Auf dem Handy gibt es den Einzelspieler. Zu zweit spielt ihr am Computer.</p>
@@ -230,10 +234,19 @@
   </div>
 </div>
 
-<script type="importmap">
-{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-               "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
-</script>
 <script type="module" src="src/main.js"></script>
+<script>
+  // Wenn das Spiel nach ein paar Sekunden nicht gestartet ist, ist der Browser zu alt
+  // (z. B. der eingebaute Browser auf älteren Smartboards). Dann sagen wir das, statt nur ein leeres Menü zu zeigen.
+  setTimeout(function () {
+    if (window.kicReady) return;
+    var box = document.getElementById('oldBrowser');
+    box.innerHTML = 'Das Spiel kann in diesem Browser nicht starten, weil er zu alt ist. ' +
+      'Bitte einen aktuellen Browser nehmen (Chrome, Edge oder Firefox) oder einen Laptop anschließen.' +
+      '<small></small>';
+    box.lastChild.textContent = navigator.userAgent;
+    box.hidden = false;
+  }, 15000);
+</script>
 </body>
 </html>

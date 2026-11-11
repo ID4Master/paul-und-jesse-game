@@ -1,6 +1,6 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { WORLD, rand, noise3, std, mesh, circles, boxes, blocked } from './util.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from '../lib/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 import { addWallWalk } from './castlewalk.js';

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { std, mesh, WORLD } from './util.js';
 import { HOME, ENEMY_CASTLE, MOUNTAINS } from './world.js';
 import { VILLAGES } from './map.js';

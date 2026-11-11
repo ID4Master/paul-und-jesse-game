@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { std, metal, mesh, move, solidAt, angleDiff, blocked as blockedSpot, circles } from './util.js';
 import { moveClimb, solidAbove, underDeck, setTowerClimb, makeTowerModel, TOWER_REL, WALK_H } from './castlewalk.js';
 import { setGrassFocus, setGrassHoles } from './grass.js';
@@ -15,17 +15,28 @@ import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRi
 
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
-const isTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 1 && /Mac|iPad/.test(navigator.platform || navigator.userAgent));
+let isTouch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 1 && /Mac|iPad/.test(navigator.platform || navigator.userAgent));
+// Grafik-Sparmodus nur nach der Erkennung beim Start (Handy/Tablet), nicht erst beim ersten Antippen
+const lowGfx = isTouch;
 if (isTouch) document.body.classList.add('touch');
+// Smartboards und Touch-Laptops melden sich oft als Maus-Gerät. Sobald jemand den Bildschirm wirklich antippt,
+// schalten wir auf Touch-Bedienung um (Joystick und Knöpfe wie auf dem iPad).
+function useTouch() {
+  if (isTouch) return;
+  isTouch = true;
+  document.body.classList.add('touch');
+}
+addEventListener('touchstart', useTouch, { passive: true, capture: true });
+addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') useTouch(); }, { capture: true });
 
 // ================= Grundaufbau =================
-const renderer = new THREE.WebGLRenderer({ antialias: !isTouch });
+const renderer = new THREE.WebGLRenderer({ antialias: !lowGfx });
 // Bildgröße immer an das Fenster anpassen. Auf großen Tablet-Bildschirmen die Auflösung begrenzen,
 // sonst bekommt der Browser nicht genug Grafikspeicher und zeichnet nur einen Teil des Bildes.
 const viewSize = () => ({ w: Math.max(1, Math.round(innerWidth)), h: Math.max(1, Math.round(innerHeight)) });
 function fitRenderer() {
   const { w, h } = viewSize();
-  const pr = Math.min(devicePixelRatio || 1, isTouch ? 1.5 : 2, Math.sqrt(3.5e6 / (w * h)));
+  const pr = Math.min(devicePixelRatio || 1, lowGfx ? 1.5 : 2, Math.sqrt(3.5e6 / (w * h)));
   const c = renderer.domElement;
   if (c.width === Math.floor(w * pr) && c.height === Math.floor(h * pr)) return;
   renderer.setPixelRatio(pr);
@@ -57,22 +68,22 @@ const sun = new THREE.DirectionalLight(0xfff0d0, 2.4);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 scene.add(sun.target);
 sun.castShadow = true;
-sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
+sun.shadow.mapSize.set(lowGfx ? 1024 : 2048, lowGfx ? 1024 : 2048);
 sun.shadow.bias = -0.0005;
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 400 });
 scene.add(sun);
 
-buildWorld(scene, { low: isTouch, sunDir: SUN_DIR, extra: buildVillages });
+buildWorld(scene, { low: lowGfx, sunDir: SUN_DIR, extra: buildVillages });
 
 // ================= Die drei Dörfer: Bürger, Gespräche und Rätsel =================
-const DLG_HINT = isTouch ? 'Tippe auf eine Antwort' : '◀ ▶ auswählen · Leertaste / Enter: OK';
+const DLG_HINT = () => (isTouch ? 'Tippe auf eine Antwort' : '◀ ▶ auswählen · Leertaste / Enter: OK');
 const talkKey = () => (isTouch ? 'den Zauber-Knopf' : 'Leertaste oder Enter');
 setupVillages(scene, {
   msg: (i, text, ms) => fxPlayerMsg(i, text, ms),
   float: (text, color, pos) => fxFloat(text, color, pos),
   sfx: (name) => fxSfx(name),
   talkKey,
-  show: (i, data) => { if (visible(i)) renderDialog(i, data, DLG_HINT); emit(['d', i, data]); },
+  show: (i, data) => { if (visible(i)) renderDialog(i, data, DLG_HINT()); emit(['d', i, data]); },
   reward: villageReward,
 });
 // ================= Drachen: nach allen Dorfrätseln vom Festturm aus fliegen =================
@@ -2249,7 +2260,7 @@ function applySnapshot(s) {
   for (const ev of s.ev) {
     const [type, a, b, c, d] = ev;
     if (type === 'f') floatText(scene, a, b, { x: c, z: d });
-    if (type === 'd' && visible(a)) renderDialog(a, b, DLG_HINT);
+    if (type === 'd' && visible(a)) renderDialog(a, b, DLG_HINT());
     if (type === 's') sfx[a]();
     if (type === 'm') playerMsg(a, b, c);
     if (type === 'g') showMsg('msg', a, b);
@@ -2672,3 +2683,5 @@ function render() {
 
 window.game = { get players() { return players; }, enemies, animals, items, keys, startGame, step, render, renderer };   // zum Ausprobieren in der Konsole
 tick();
+window.kicReady = true;   // Startsignal für die Meldung "Browser zu alt" in index.html
+document.getElementById('oldBrowser').hidden = true;

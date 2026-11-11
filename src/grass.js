@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
 import { WORLD } from './util.js';
 

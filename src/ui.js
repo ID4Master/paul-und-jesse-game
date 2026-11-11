@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../lib/three.module.js';
 
 // ---------- Lebensleiste über dem Kopf ----------
 export function makeBar(y = 2.35) {
