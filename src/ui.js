@@ -99,20 +99,70 @@ export const sfx = {
   lifeLost: () => [392, 330, 262].forEach((f, i) => beep(f, 0.25, 'triangle', 0.06, 0, i * 0.2)),
 };
 
-// ---------- Nachrichten auf dem Bildschirm ----------
-const timers = {};
-// Alle Hinweise merken, damit man sie unter 💡 Tipps nochmal lesen kann (neueste zuerst, doppelte nur einmal)
+// ---------- Nachrichten: eine Box unten, mit ◀ ▶ kann man ältere nochmal lesen ----------
+// Alle längeren Hinweise merken, damit man sie unter 💡 Tipps nochmal lesen kann (neueste zuerst, doppelte nur einmal)
 export const msgLog = [];
+let split = false;   // zu zweit an einer Tastatur: jeder Spieler hat seine eigene Box
+const boxes = [0, 1].map(makeBox);
+
+function makeBox(i) {
+  const el = document.createElement('div');
+  el.className = 'mbox empty mini' + (i ? ' off' : '');
+  el.id = 'mbox' + i;
+  el.innerHTML = '<button class="mPrev" tabindex="-1" title="ältere Nachricht">◀</button><div class="mText"></div>' +
+    '<button class="mNext" tabindex="-1" title="neuere Nachricht">▶</button><div class="mPage"></div>' +
+    '<button class="mOpen" tabindex="-1" title="Nachrichten nochmal lesen">💬</button>';
+  document.body.appendChild(el);
+  const b = { el, hist: [], pos: 0, timer: 0 };
+  const tap = (sel, fn) => el.querySelector(sel).addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+  tap('.mPrev', () => page(b, 1));
+  tap('.mNext', () => page(b, -1));
+  tap('.mOpen', () => { b.pos = 0; show(b, 8000); });
+  return b;
+}
+function render(b) {
+  const n = b.hist.length;
+  b.el.querySelector('.mText').textContent = b.hist[b.pos] || '';
+  b.el.querySelector('.mPage').textContent = b.pos ? `${n - b.pos} von ${n}` : n > 1 ? 'neu' : '';
+  b.el.querySelector('.mPrev').disabled = b.pos >= n - 1;
+  b.el.querySelector('.mNext').disabled = b.pos <= 0;
+  b.el.querySelector('.mOpen').textContent = `💬 ${n}`;
+  b.el.classList.toggle('empty', !n);
+}
+function show(b, ms) {
+  render(b);
+  b.el.classList.remove('mini');
+  clearTimeout(b.timer);
+  b.timer = setTimeout(() => { b.pos = 0; b.el.classList.add('mini'); render(b); }, ms);
+}
+function page(b, d) {
+  if (!b.hist.length) return;
+  if (b.el.classList.contains('mini')) b.pos = 0;
+  else b.pos = Math.max(0, Math.min(b.hist.length - 1, b.pos + d));
+  show(b, 8000);
+}
+// Taste N / Knopf: ältere Nachricht in der Box von Spieler i
+export const pageMsg = (i, d = 1) => page(boxes[split ? i : 0], d);
+export function setMsgSplit(on) {
+  split = on;
+  boxes[1].el.classList.toggle('off', !on);
+}
+
+// id: 'msg' (für alle), 'msg0' oder 'msg1' (nur für diesen Spieler)
 export function showMsg(id, text, ms = 2500) {
-  if (text && ms > 2500) {
+  if (!text) return;
+  if (ms > 2500) {
     const old = msgLog.indexOf(text);
     if (old >= 0) msgLog.splice(old, 1);
     msgLog.unshift(text);
     if (msgLog.length > 25) msgLog.length = 25;
   }
-  const el = document.getElementById(id);
-  el.textContent = text;
-  el.style.opacity = 1;
-  clearTimeout(timers[id]);
-  timers[id] = setTimeout(() => (el.style.opacity = 0), ms);
+  const targets = !split ? [0] : id === 'msg1' ? [1] : id === 'msg0' ? [0] : [0, 1];
+  for (const k of targets) {
+    const b = boxes[k];
+    if (b.hist[0] !== text) b.hist.unshift(text);
+    if (b.hist.length > 30) b.hist.length = 30;
+    b.pos = 0;
+    show(b, Math.max(ms, 2500) + 1500);   // etwas länger stehen lassen, unten stört sie ja nicht
+  }
 }

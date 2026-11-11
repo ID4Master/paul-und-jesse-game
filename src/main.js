@@ -10,7 +10,7 @@ import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECT
 import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
 import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
-import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog } from './ui.js';
+import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog, pageMsg, setMsgSplit } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
@@ -222,9 +222,9 @@ const KEYMAPS = {
 };
 KEYMAPS.all = Object.fromEntries(Object.keys(KEYMAPS.p1).map((k) => [k, [...KEYMAPS.p1[k], ...KEYMAPS.p2[k]]]));
 const KEY_HINTS = {
-  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · H Anzeige',
+  p1: 'W A S D laufen · Leertaste angreifen · Q Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · N alte Nachrichten · H Anzeige',
   p2: 'Pfeiltasten laufen · Enter angreifen · Shift rechts Waffe wechseln · - Festung · . Karte · , Rucksack',
-  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · H Anzeige',
+  all: 'W A S D / Pfeile laufen · Leertaste / Enter angreifen · Q / Shift Waffe wechseln · F Festung · M Karte · R Rucksack · T Tipps · N alte Nachrichten · H Anzeige',
 };
 
 // source: 'local' (Tastatur/Touch an diesem Gerät) oder 'remote' (über das Netzwerk)
@@ -812,6 +812,8 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'KeyT' || e.code === 'Numpad5') toggleTips();
   if (e.code === 'KeyH' || e.code === 'Numpad6') toggleHud();
+  if (e.code === 'KeyN') pageMsg(0);
+  if (e.code === 'Numpad7') pageMsg(1);
   if (e.code === 'Escape') closePanels();
 });
 addEventListener('keyup', (e) => (keys[e.code] = false));
@@ -2929,6 +2931,7 @@ function startGame(newMode) {
   if (mode === 'local') players = [createPlayer(0, 'p1', 'local'), createPlayer(1, 'p2', 'local')];
   if (mode === 'host') players = [createPlayer(0, 'all', 'local'), createPlayer(1, 'all', 'remote')];
   if (mode === 'client') players = [createPlayer(0, 'all', 'remote'), createPlayer(1, 'all', 'local')];
+  setMsgSplit(mode === 'local');
   players.forEach((p) => (p.hud.style.display = visible(p.index) ? 'block' : 'none'));
   [0, 1].forEach((i) => showMinimap(i, !!players[i] && visible(i)));
   if (mode !== 'local') players[me].hud.appendChild($('store'));
@@ -3034,8 +3037,8 @@ $('bagClose').onclick = () => ($('bagBox').hidden = true);
 // ---------- Tipps: zuletzt gezeigte Hinweise und Erklärungen ----------
 const HELP = () => [
   ['🎮 Steuern', isTouch
-    ? 'Links mit dem Kreis laufen. Rechts: 🪄 zaubern, 🔄 Zauber wechseln, 🏰 Festung, 🗺️ Weltkarte. Oben rechts: 🎒 Rucksack, 💡 Tipps, 👁️ Anzeige, ☰ Menü.'
-    : 'W A S D oder Pfeiltasten laufen, Leertaste oder Enter zaubern, Q oder Shift Zauber wechseln, F Festung, M Weltkarte, R Rucksack, T Tipps, H Anzeige ein und aus, Esc schließt ein Fenster.'],
+    ? 'Links mit dem Kreis laufen. Rechts: 🪄 zaubern, 🔄 Zauber wechseln, 🏰 Festung, 🗺️ Weltkarte. Oben rechts: 🎒 Rucksack, 💡 Tipps, 👁️ Anzeige, ☰ Menü. In der Nachrichten-Box unten blätterst du mit ◀ ▶ zurück, 💬 holt sie wieder her.'
+    : 'W A S D oder Pfeiltasten laufen, Leertaste oder Enter zaubern, Q oder Shift Zauber wechseln, F Festung, M Weltkarte, R Rucksack, T Tipps, N ältere Nachrichten in der Box unten, H Anzeige ein und aus, Esc schließt ein Fenster.'],
   ['🪄 Zaubern und Schelme', 'Freche Schelme verzauberst du mit deinem Zauberstab. Je mehr du verzauberst, desto höher dein Level und desto besser deine Rüstung. Leuchtende Sachen am Boden geben dir für kurze Zeit einen Extra-Zauber.'],
   ['🐾 Tiere befreien', 'Der böse Zauberer hat Tiere in Käfige gesperrt. Befrei sie und bring sie in deinen Stall neben der Burg. Wilde Tiere kommen mit, wenn du sie mit einem Apfel 🍎 fütterst. Sind alle Tiere frei, wird der Zauberer zum Frosch!'],
   ['🎒 Sammeln und Burglager', `Holz, Steine, Seife, Sternenstaub, Getreide und Gold kommen in deinen Rucksack. Es passen ${PACK_SIZE} Sachen hinein. Auf der Ablagefläche vor eurer Burg fliegt alles ins Burglager.`],
