@@ -14,12 +14,15 @@ function merged(g, geos, mat) {
 export const FORT_HALF = 6;     // halbe Kantenlänge (immer gleich, damit Ausbauen nie gegen etwas stößt)
 export const FORT_GATE = 3.2;   // Breite vom Tor
 export const FORT_MAX = 3;
+// cap: so viel passt ins Festungslager, pets: so viele Tiere wohnen in der Festung
 export const FORT_LEVELS = [
   null,
-  { name: 'Holzfestung' },
-  { name: 'Steinfestung', cost: { gold: 4, stone: 6, wood: 4 } },
-  { name: 'Ritterburg', cost: { gold: 8, stone: 10, wood: 6, star: 2 } },
+  { name: 'Holzfestung', cap: 20, pets: 4 },
+  { name: 'Steinfestung', cap: 50, pets: 8, cost: { gold: 4, stone: 6, wood: 4 } },
+  { name: 'Ritterburg', cap: 100, pets: 12, cost: { gold: 8, stone: 10, wood: 6, star: 2 } },
 ];
+// Lager-Fläche in der Festung (lokal, links vorne)
+export const FORT_STORE = { x: -3.6, z: 3.5 };
 export const FORT_COLORS = [0x1e63d6, 0xef6c00];
 
 // Drehung in Vierteln: lokales (x, z) -> Welt. Das Tor liegt lokal bei +z.
@@ -107,6 +110,17 @@ export function makeFortModel(level, color) {
     const roof = mesh(new THREE.ConeGeometry(2.6, 1.6, 4), roofM, 2.2, 3.2, -H + 2.4);
     roof.rotation.y = Math.PI / 4;
     g.add(roof);
+  }
+  // Lager: Kisten und Fässer neben der Lager-Fläche (mehr, je größer die Festung)
+  const crate = std(0xa0703c), band = std(0x5d4037);
+  for (let k = 0; k < level * 2; k++) {
+    const x = -H + (level === 1 ? 1.1 : 1.5) + (k % 2) * 0.95, z = 0.2 - Math.floor(k / 2) * 1.0;
+    if (k % 3 === 2) {
+      g.add(mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.9, 10), band, x, 0.45, z));
+    } else {
+      g.add(mesh(new THREE.BoxGeometry(0.85, 0.8, 0.85), crate, x, 0.4, z));
+      g.add(mesh(new THREE.BoxGeometry(0.9, 0.1, 0.9), band, x, 0.62, z));
+    }
   }
   // Fahne in der Spielerfarbe
   const poleH = level === 1 ? 4.5 : level === 2 ? 7.5 : 9;

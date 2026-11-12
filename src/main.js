@@ -7,7 +7,7 @@ import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeS
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
 import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel } from './map.js';
-import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
+import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, FORT_STORE, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
 import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog, pageMsg, setMsgSplit } from './ui.js';
@@ -16,7 +16,7 @@ import { startVoice, stopVoice } from './voice.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
   villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
 import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRider, riderCamera, dragonMapMarks, dragonSnapshot, applyDragonSnapshot,
-  resetDragons, dragonDebug } from './dragon.js';
+  resetDragons, dragonDebug, dragonGroundFire, basketSpot, mouthOf, dragonList, setDragonBasket } from './dragon.js';
 
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
@@ -109,6 +109,8 @@ initDragons(scene, {
   solvedAll: () => solvedCount() >= PUZZLES.length,
   missing: () => PUZZLES.length - solvedCount(),
   towerBuilt: () => !!built.tower,
+  breath: (d, p, flying) => dragonBreath(d, p, flying),
+  fireTarget: (d) => fireTargets(d, mouthOf(d), 26, false)[0]?.root.position,
   flyHelp: (p) => {
     if (isTouch && (mode !== 'local')) return 'Joystick hoch/runter: höher/tiefer, links/rechts: lenken. 💬-Knopf: landen, 🔄: Feuer!';
     const k = p.keymap === KEYMAPS.p2 ? ['Pfeil hoch/runter', 'Pfeil links/rechts', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W/S', 'A/D', 'Leertaste', 'Q'] : ['W/S oder Pfeile', 'A/D oder Pfeile', 'Leertaste/Enter', 'Q'];
@@ -682,12 +684,16 @@ const bubbleMat = new THREE.MeshStandardMaterial({ color: 0xbfefff, transparent:
 const snowMat = std(0xffffff);
 const spellMat = new THREE.MeshStandardMaterial({ color: 0xce93d8, emissive: 0x9c27b0, emissiveIntensity: 2.5 });
 const orbGeo = new THREE.SphereGeometry(0.15, 12, 10);
+const starGeo = new THREE.OctahedronGeometry(0.35);
+const starMat = new THREE.MeshStandardMaterial({ color: 0xfff176, emissive: 0xffc400, emissiveIntensity: 2.5 });
 
 function makeProjectileMesh(kind, owner) {
   let m;
   if (kind === 'spell') {
     m = new THREE.Mesh(orbGeo, spellMat);
     m.scale.setScalar(1.6);
+  } else if (kind === 'star') {
+    m = new THREE.Mesh(starGeo, starMat);
   } else if (kid) {
     m = new THREE.Mesh(orbGeo, owner === 'enemy' ? snowMat : kind === 'bullet' ? bubbleMat : orbMat);
     if (owner === 'enemy') m.scale.setScalar(0.8);
@@ -703,12 +709,23 @@ function makeProjectileMesh(kind, owner) {
   return m;
 }
 
-function shoot({ from, heading, speed, target, dmg, kind, owner, by }) {
-  const m = makeProjectileMesh(kind, owner);
+// Liegt zwischen zwei Punkten eine Mauer, ein Haus oder ein Berg?
+function lineBlocked(x1, z1, x2, z2) {
+  const n = Math.ceil(Math.hypot(x2 - x1, z2 - z1) / 0.25);
+  for (let k = 1; k <= n; k++) if (solidAt(x1 + (x2 - x1) * k / n, z1 + (z2 - z1) * k / n)) return true;
+  return false;
+}
+
+function shoot({ from, heading, speed, target, dmg, kind, owner, by, y, vy = 0, life = 1.6, ahead = 0.8 }) {
   const y0 = from.y || 0;   // von der Burgmauer aus fliegt der Schuss über die Zinnen
-  m.position.set(from.x + Math.sin(heading) * 0.8, 1.4 + y0, from.z + Math.cos(heading) * 0.8);
-  projectiles.push({ id: nextId++, m, kind, vel: new THREE.Vector3(Math.sin(heading) * speed, 0, Math.cos(heading) * speed),
-                     speed, target, dmg, owner, by, life: 1.6, high: y0 > 1 ? 3 : 0, sx: from.x, sz: from.z });
+  const x = from.x + Math.sin(heading) * ahead, z = from.z + Math.cos(heading) * ahead;
+  const high = y0 > 1 ? 3 : 0;
+  // Steht der Schütze direkt an einer Mauer, landet der Schuss in der Mauer und nicht dahinter
+  if (!high && y === undefined && lineBlocked(from.x, from.z, x, z)) return;
+  const m = makeProjectileMesh(kind, owner);
+  m.position.set(x, y ?? 1.4 + y0, z);
+  projectiles.push({ id: nextId++, m, kind, vel: new THREE.Vector3(Math.sin(heading) * speed, vy, Math.cos(heading) * speed),
+                     speed, target, dmg, owner, by, life, high, sx: from.x, sz: from.z });
 }
 
 const tmpV = new THREE.Vector3();
@@ -720,30 +737,71 @@ function updateProjectiles(dt) {
       tmpV.copy(pr.target.root.position).setY(1.1).sub(pos).normalize().multiplyScalar(pr.speed);
       pr.vel.lerp(tmpV, Math.min(1, dt * 10));
     }
-    pos.addScaledVector(pr.vel, dt);
-    pr.m.lookAt(tmpV.copy(pos).add(pr.vel));
     pr.life -= dt;
-    const overWall = pr.high && Math.hypot(pos.x - pr.sx, pos.z - pr.sz) < pr.high;
-    let done = pr.life <= 0 || pos.y < 0 || (pos.y < 7 && !overWall && solidAt(pos.x, pos.z));
-    if (!done && pr.owner === 'player') {
-      for (const c of targets()) {
-        const cp = c.root.position;
-        if (Math.hypot(cp.x - pos.x, cp.z - pos.z) < 0.9 && pos.y < 2.4) {
-          const l = Math.hypot(pr.vel.x, pr.vel.z) || 1;
-          hitCreature(c, pr.by, pr.dmg, (pr.vel.x / l) * 0.5, (pr.vel.z / l) * 0.5);
-          done = true;
-          break;
+    // In kleinen Schritten fliegen, damit nichts durch dünne Mauern (Palisade) durchrutscht
+    const steps = Math.max(1, Math.ceil(pr.vel.length() * dt / 0.2));
+    let done = pr.life <= 0;
+    for (let k = 0; k < steps && !done; k++) {
+      pos.addScaledVector(pr.vel, dt / steps);
+      const overWall = pr.high && Math.hypot(pos.x - pr.sx, pos.z - pr.sz) < pr.high;
+      done = pos.y < 0 || (pos.y < 7 && !overWall && solidAt(pos.x, pos.z));
+      if (!done && pr.kind === 'star' && wizard && !wizard.gone && pos.distanceTo(tmpV.copy(wizard.root.position).setY(1.2)) < 1.4) {
+        // Den bösen Zauberer kann man nicht verzaubern, aber ihm wird schwindelig und er hört eine Weile auf zu zaubern
+        wizard.dizzy = 8;
+        wizard.wind = 0;
+        fxFloat('😵 Hui, mir ist schwindelig!', '#fff176', wizard.root.position);
+        done = true;
+      }
+      if (!done && pr.owner === 'player') {
+        for (const c of targets()) {
+          const cp = c.root.position;
+          if (Math.hypot(cp.x - pos.x, cp.z - pos.z) < (pr.kind === 'star' ? 1.3 : 0.9) && pos.y < 2.4) {
+            const l = Math.hypot(pr.vel.x, pr.vel.z) || 1;
+            hitCreature(c, pr.by, pr.dmg, (pr.vel.x / l) * 0.5, (pr.vel.z / l) * 0.5);
+            done = true;
+            break;
+          }
+        }
+      }
+      if (!done && pr.owner === 'enemy') {
+        for (const p of alivePlayers()) {
+          const pp = p.root.position;
+          if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < 0.8 && pos.y < pp.y + 2.4 && pos.y > pp.y) { hurtPlayer(p, pr.dmg); done = true; break; }
         }
       }
     }
-    if (!done && pr.owner === 'enemy') {
-      for (const p of alivePlayers()) {
-        const pp = p.root.position;
-        if (Math.hypot(pp.x - pos.x, pp.z - pos.z) < 0.8 && pos.y < pp.y + 2.4 && pos.y > pp.y) { hurtPlayer(p, pr.dmg); done = true; break; }
-      }
-    }
+    pr.m.lookAt(tmpV.copy(pos).add(pr.vel));
+    if (pr.kind === 'star') pr.m.rotation.z += dt * 10;
     if (done) { scene.remove(pr.m); projectiles.splice(projectiles.indexOf(pr), 1); }
   }
+}
+
+// ================= Sternenfeuer vom Drachen =================
+// Ziele für den Drachen: freche Schelme vor dem Maul (und der böse Zauberer, dem wird davon schwindelig)
+function fireTargets(d, mouth, range, flying) {
+  const list = [...enemies.filter((e) => !e.dying), ...(wizard && !wizard.gone ? [wizard] : [])];
+  return list.map((c) => {
+    const cp = c.root.position, dx = cp.x - mouth.x, dz = cp.z - mouth.z, dist = Math.hypot(dx, dz);
+    const ang = Math.abs(angleDiff(Math.atan2(dx, dz), d.yaw));
+    return { c, dist, ang };
+  }).filter((t) => t.dist < range && (flying ? t.ang < 0.9 || t.dist < 10 : true)
+    && (flying || !lineBlocked(mouth.x, mouth.z, t.c.root.position.x, t.c.root.position.z)))
+    .sort((a, b) => a.dist + a.ang * 6 - (b.dist + b.ang * 6)).map((t) => t.c);
+}
+function dragonBreath(d, p, flying) {
+  if (!kid || !p) return;
+  const mouth = mouthOf(d);
+  const foes = fireTargets(d, mouth, flying ? 45 : 28, flying).slice(0, 4);
+  const from = { x: mouth.x - Math.sin(d.yaw) * 0.8, z: mouth.z - Math.cos(d.yaw) * 0.8 };
+  // Ein Fächer aus Sternen; die mit Ziel fliegen dem Schelm hinterher
+  for (let k = 0; k < 5; k++) {
+    const target = foes[k % Math.max(1, foes.length)] || null;
+    const spread = (k - 2) * 0.12;
+    const aim = target ? Math.atan2(target.root.position.x - mouth.x, target.root.position.z - mouth.z) + spread * 0.5 : d.yaw + spread;
+    later(k * 0.08, () => shoot({ from, heading: aim, speed: 26, target: target && !target.dying ? target : null, dmg: 40, kind: 'star', owner: 'player', by: p,
+      y: mouth.y, vy: target ? 0 : flying ? -9 : -1.5, life: flying ? 2.6 : 1.4 }));
+  }
+  if (foes.length) fxPlayerMsg(p.index, '🐉✨ Sternenfeuer! Der Drache verzaubert die Schelme!', 2500);
 }
 
 // ================= Angriff der Spieler =================
@@ -890,7 +948,7 @@ function updatePlayerLogic(p, dt) {
       moveClimb(root, Math.sin(p.heading) * speed * dt, Math.cos(p.heading) * speed * dt);   // auch Treppen, Wehrgang, Turm
       p.moving = speed > 0 ? 1 : -1;
     }
-    if (p.swapReq) swapWeapon(p);
+    if (p.swapReq && !(kid && dragonGroundFire(p))) swapWeapon(p);
     if (p.fortReq) { p.fortReq = false; if (kid) fortAction(p); }
     p.cooldown -= dt;
     if (p.holdAtk && !inp.attack) p.holdAtk = false;
@@ -1097,7 +1155,10 @@ function updateEnemyLogic(e, dt) {
           moving = move(root, sideX * e.orbitDir * 2.5 * dt, sideZ * e.orbitDir * 2.5 * dt, 0.5);
           if (!moving || Math.random() < dt * 0.4) e.orbitDir *= -1;
         }
-        if (e.shootCd <= 0 && dist < 26) { e.wind = 0.7; e.shootCd = 2.5 + Math.random(); }
+        if (e.shootCd <= 0 && dist < 26) {
+          if (!lineBlocked(pos.x, pos.z, tp.x, tp.z)) { e.wind = 0.7; e.shootCd = 2.5 + Math.random(); }
+          else e.shootCd = 0.5;   // Mauer dazwischen: nicht werfen, erst um die Ecke laufen
+        }
       }
     } else {
       if (e.wind > 0) {
@@ -1246,6 +1307,36 @@ function updateKidAnimal(c, dt) {
   c.hintCd = (c.hintCd || 0) - dt;
   let speed = 0;
   if (c.state === 'captive') { c.spd = 0; return; }
+  if (c.state === 'basket') {
+    // sitzt im Drachenkorb und fliegt mit
+    const d = dragonList()[c.basket];
+    if (!d || d.state === 'away' || !built.basket) { c.state = 'wild'; pos.y = 0; root.scale.setScalar(1); return; }
+    const sp = basketSpot(d, c.slot);
+    pos.set(sp.x, sp.y, sp.z);
+    root.rotation.y = d.yaw + (c.slot % 2 ? 0.4 : -0.4);
+    root.scale.setScalar(0.45);
+    c.spd = 0;
+    return;
+  }
+  if (c.state === 'hop') {
+    // hüpft in hohem Bogen aus dem Korb in die Festung oder in den Stall
+    const h = c.hop;
+    h.t = Math.min(1, h.t + dt / 1.2);
+    const t = h.t;
+    pos.set(h.fx + (h.tx - h.fx) * t, h.fy * (1 - t) + Math.sin(t * Math.PI) * 4, h.fz + (h.tz - h.fz) * t);
+    root.scale.setScalar(0.45 + 0.55 * t);
+    c.spd = 0;
+    if (t < 1) return;
+    pos.y = 0;
+    root.scale.setScalar(1);
+    if (h.fort >= 0) { c.state = 'fort'; c.fort = h.fort; c.prodT = PRODUCE[c.type][1] / 2; fxFloat('Zuhause! 🏰', '#a5ff8a', pos); }
+    else { c.state = 'stall'; c.prodT = PRODUCE[c.type][1] / 2; c.food = 100; c.starve = 0; fxFloat('Im Stall! 🏠', '#a5ff8a', pos); }
+    return;
+  }
+  if (c.state === 'fort' && (!forts[c.fort] || forts[c.fort].packed)) {
+    const o = players[c.fort];
+    if (o && !o.out) { c.state = 'follow'; c.owner = o; } else c.state = 'wild';
+  }
   if (c.state === 'follow' && (!c.owner || c.owner.out)) { c.state = 'wild'; c.owner = null; }
 
   if (c.state === 'follow' && inStall(pos.x, pos.z, 0.5)) {
@@ -1297,6 +1388,20 @@ function updateKidAnimal(c, dt) {
       c.heading += (Math.random() - 0.5) * 2;
     }
     speed = c.wander ? (c.type === 'chicken' ? 1 : 1.5) : 0;
+    if (c.state === 'fort') {
+      // In der eigenen Festung: kein Hunger, aber sie geben trotzdem Milch und Eier
+      const f = forts[c.fort];
+      const nx = pos.x + Math.sin(c.heading) * 1.5, nz = pos.z + Math.cos(c.heading) * 1.5;
+      if (!inFort(f, nx, nz, 1.6)) c.heading = Math.atan2(f.x - pos.x, f.z - pos.z);
+      if ((c.prodT -= dt) <= 0) {
+        const [item, every, text] = PRODUCE[c.type];
+        c.prodT = every;
+        if (items.filter((it) => it.type === item).length < 12) {
+          dropItem(item, { x: pos.x + (Math.random() - 0.5) * 2, z: pos.z + (Math.random() - 0.5) * 2 });
+          fxFloat(text, '#ffffff', pos);
+        }
+      }
+    }
     if (c.state === 'stall') {
       if (stallHunger(c, dt)) return;
       const nx = pos.x + Math.sin(c.heading) * 1.5, nz = pos.z + Math.cos(c.heading) * 1.5;
@@ -1354,6 +1459,85 @@ function stallHunger(c, dt) {
   scene.remove(c.root);
   animals.splice(animals.indexOf(c), 1);
   return true;
+}
+
+// ================= Drachenkorb: Tiere fliegen mit =================
+// Neben dem gelandeten Drachen hüpfen Tiere, die einem folgen, in den Korb. Bei der eigenen Festung oder beim Stall hüpfen sie wieder heraus.
+const BASKET_CAP = { chicken: 5, cow: 2, boar: 2, deer: 1 };
+const BASKET_NAME = { chicken: 'Hühner', cow: 'Kühe', boar: 'Wildschweine', deer: 'Rehe' };
+const STALL_MID = { x: (STALL.x1 + STALL.x2) / 2, z: (STALL.z1 + STALL.z2) / 2 };
+const inBasket = (k) => animals.filter((a) => !a.dying && a.state === 'basket' && a.basket === k);
+
+function basketHome(d) {
+  const mine = forts[d.last];
+  const near = forts.filter((f) => !f.packed && Math.hypot(d.x - f.x, d.z - f.z) < 26)
+    .sort((a, b) => (a === mine ? -1 : b === mine ? 1 : 0));
+  if (near.length) return { fort: near[0] };
+  if (Math.hypot(d.x - STALL_MID.x, d.z - STALL_MID.z) < 32) return { stall: true };
+  return null;
+}
+
+function hopOut(c, to, fort) {
+  const p = c.root.position;
+  c.state = 'hop';
+  c.hop = { t: 0, fx: p.x, fy: p.y, fz: p.z, tx: to.x, tz: to.z, fort };
+  fxSfx('plop');
+}
+
+function unloadBasket(d, load, home) {
+  const who = players[d.last] || players[0];
+  if (home.fort) {
+    const f = home.fort;
+    const room = FORT_LEVELS[f.level].pets - fortPets(f);
+    const out = load.slice(0, Math.max(0, room));
+    out.forEach((c, k) => hopOut(c, fortPoint(f, -2.5 + (k % 4) * 1.6, -2.5 + Math.floor(k / 4) * 1.3), f.i));
+    if (out.length) fxPlayerMsg(who.index, `🧺 ${out.length} ${out.length === 1 ? 'Tier hüpft' : 'Tiere hüpfen'} in die Festung! Dort haben sie keinen Hunger und geben Milch 🥛 und Eier 🥚.`, 4000);
+    if (out.length < load.length && !d.fullHint) {
+      d.fullHint = true;
+      fxPlayerMsg(who.index, `🏰 In der ${FORT_LEVELS[f.level].name} ist nur Platz für ${FORT_LEVELS[f.level].pets} Tiere. Bau sie aus oder flieg mit den übrigen zum Stall!`, 5000);
+    }
+    return;
+  }
+  load.forEach((c) => hopOut(c, { x: STALL.x1 + 2 + Math.random() * (STALL.x2 - STALL.x1 - 4), z: STALL.z1 + 2 + Math.random() * (STALL.z2 - STALL.z1 - 4) }, -1));
+  fxPlayerMsg(who.index, `🧺 ${load.length} ${load.length === 1 ? 'Tier hüpft' : 'Tiere hüpfen'} aus dem Korb in den Stall!`, 3500);
+}
+
+function updateBasket() {
+  if (!built.basket) return;
+  for (const d of dragonList()) {
+    if (d.state !== 'rest') { d.fullHint = false; d.awayHint = false; d.typeHint = {}; }
+    d.typeHint ||= {};
+    const load = inBasket(d.k);
+    if (d.state === 'perch' && load.length) { unloadBasket(d, load, { stall: true }); continue; }
+    if (d.state !== 'rest') continue;
+    const home = basketHome(d);
+    if (home) { if (load.length) unloadBasket(d, load, home); continue; }
+    if (load.length && !d.awayHint && players[d.last]) {
+      d.awayHint = true;
+      fxPlayerMsg(d.last, '🧺 Die Tiere bleiben im Korb. Lande bei deiner Festung 🚩 oder beim Stall, dann hüpfen sie heraus.', 4000);
+    }
+    // Tiere, die einem folgen, hüpfen in den Korb, wenn Platz ist
+    for (const c of animals) {
+      if (c.dying || c.state !== 'follow' || Math.hypot(c.root.position.x - d.x, c.root.position.z - d.z) > 5) continue;
+      const cur = inBasket(d.k);
+      const n = cur.filter((a) => a.type === c.type).length;
+      if (n >= BASKET_CAP[c.type]) {
+        if (!d.typeHint[c.type] && c.owner) {
+          d.typeHint[c.type] = true;
+          fxPlayerMsg(c.owner.index, `🧺 Für ${BASKET_NAME[c.type]} ist kein Platz mehr im Korb (${BASKET_CAP[c.type]} von ${BASKET_CAP[c.type]}).`, 3000);
+        }
+        continue;
+      }
+      const used = new Set(cur.map((a) => a.slot));
+      let slot = 0;
+      while (used.has(slot)) slot++;
+      const owner = c.owner;
+      Object.assign(c, { state: 'basket', basket: d.k, slot, owner: null });
+      fxFloat('Hopp! 🧺', '#ffe082', c.root.position);
+      fxSfx('pickup');
+      if (owner) fxPlayerMsg(owner.index, `🧺 ${capital(ANIMAL_NAME[c.type])} sitzt im Drachenkorb! (${n + 1} von ${BASKET_CAP[c.type]} ${BASKET_NAME[c.type]})`, 3000);
+    }
+  }
 }
 
 // Spieler bekommen langsam Hunger. Ganz ohne Essen sinkt die Energie, aber nur bis zu einem Rest.
@@ -1442,11 +1626,14 @@ function updateWizardLogic(dt) {
     return;
   }
   const t = nearestPlayer(w.root.position, 32);
+  if (w.dizzy > 0) { w.dizzy -= dt; w.wind = 0; w.root.rotation.y += dt * 6; return; }
   if (!t) { w.wind = 0; return; }
   const tp = t.root.position, pos = w.root.position;
   const face = Math.atan2(tp.x - pos.x, tp.z - pos.z);
   w.root.rotation.y = face;
-  if (w.wind > 0) {
+  const wall = lineBlocked(pos.x, pos.z, tp.x, tp.z);
+  if (wall) { w.wind = 0; w.castT = Math.max(w.castT, 0.6); }   // durch Mauern kann er nicht zaubern
+  else if (w.wind > 0) {
     w.wind -= dt;
     if (w.wind <= 0) {
       fxSfx('plop');
@@ -1504,7 +1691,24 @@ const store = { wood: 0, stone: 0, soap: 0, star: 0, grain: 0, gold: 0 };
 const packCount = (p) => MATERIALS.reduce((n, m) => n + p.pack[m], 0);
 const matText = (o) => MATERIALS.filter((m) => o[m] > 0).map((m) => `${MAT_ICON[m]}${o[m]}`).join(' ');
 const inCastle = (pos) => Math.abs(pos.x - HOME.x) < 9.5 && pos.z > HOME.z - 9.5 && pos.z < HOME.z + 9.5;
-const onPad = (pos, x, z) => Math.abs(pos.x - x) < 2.1 && Math.abs(pos.z - z) < 2.1;
+const onPad = (pos, x, z, r = 2.1) => Math.abs(pos.x - x) < r && Math.abs(pos.z - z) < r;
+// Bezahlt wird aus mehreren Lagern: Burglager und Festungslager. pools = Liste von Lagern in der Reihenfolge, in der genommen wird.
+const have = (pools, m) => pools.reduce((n, o) => n + o[m], 0);
+function lacking(pools, cost) {
+  const miss = {};
+  for (const [m, n] of Object.entries(cost)) if (have(pools, m) < n) miss[m] = n - have(pools, m);
+  return miss;
+}
+const affords = (pools, cost) => !Object.keys(lacking(pools, cost)).length;
+function spend(pools, cost) {
+  for (const [m, n] of Object.entries(cost)) {
+    let rest = n;
+    for (const o of pools) { const k = Math.min(rest, o[m]); o[m] -= k; rest -= k; }
+  }
+}
+// Werkstatt: erst Burglager, dann die Festungslager
+const shopPools = () => [store, ...forts.map((f) => f.store)];
+const dragonReady = () => solvedCount() >= PUZZLES.length && !!built.tower;
 
 const UNLOAD = { x: 8, z: 62 };
 const BUILDS = [
@@ -1523,6 +1727,8 @@ const BUILDS = [
     done: 'Die Berge sind aus Felsblöcken! Haut unten Block für Block Höhlen und Gänge hinein. In vier Bergen wartet tief drinnen ein Schatz!' },
   { id: 'scythe', tool: true, name: 'Sense', icon: '🌾', px: -25, pz: 69, cost: { wood: 1, stone: 2 },
     done: 'Jetzt könnt ihr das reife Getreide hinter dem Stall mähen: ins Feld stellen und zaubern. Bringt das Getreide 🌾 in den Futtertrog im Stall!' },
+  { id: 'basket', gear: true, needDragon: true, name: 'Drachenkorb', icon: '🧺', px: -13, pz: 69, cost: { wood: 6, grain: 2 },
+    done: 'Die Drachen tragen jetzt einen Korb! Lande mit dem Drachen und lauf mit deinen Tieren zu ihm, dann hüpfen sie hinein (5 Hühner, 2 Kühe, 2 Wildschweine, 1 Reh). Flieg zu deiner Festung 🚩 oder zum Stall, dort hüpfen sie wieder heraus.' },
   { id: 'bakery', name: 'Bäckerei', icon: '🍞', px: -19, pz: 69, x: BAKERY.x, z: BAKERY.z, cost: { wood: 4, stone: 4 },
     done: 'Hinter dem Getreidefeld steht jetzt eine Bäckerei! Die Mühle mahlt Getreide 🌾 aus dem Burglager zu Mehl, und der Ofen backt Brot 🍞. Brot macht richtig satt!' },
 ];
@@ -1689,6 +1895,11 @@ function makeBuildModel(id) {
 function placeBuild(id) {
   const s = sites.find((x) => x.b.id === id);
   built[id] = true;
+  if (s.b.gear) {
+    setDragonBasket(true);
+    for (let k = 0; k < 6; k++) floatText(scene, '✨', '#ffd54f', { x: s.b.px + (Math.random() - 0.5) * 3, z: s.b.pz + (Math.random() - 0.5) * 3 }, 1 + Math.random() * 2);
+    return;
+  }
   if (s.b.tool) {
     // Werkzeug: kein Bauwerk, aber das Werkzeug in der Welt wird nicht mehr gebraucht
     for (const it of [...items]) if (it.type === id) { scene.remove(it.g); items.splice(items.indexOf(it), 1); }
@@ -1702,16 +1913,19 @@ function placeBuild(id) {
 }
 
 function tryBuild(s, p) {
-  const missing = {};
-  for (const [m, n] of Object.entries(s.b.cost)) if (store[m] < n) missing[m] = n - store[m];
+  if (s.b.needDragon && !dragonReady()) {
+    if (s.hintCd <= 0) { s.hintCd = 5; fxPlayerMsg(p.index, `🐉 Den ${s.b.name} gibt es erst, wenn ihr einen Drachen habt: alle Dorfrätsel lösen und den Festturm bauen.`, 3500); }
+    return;
+  }
+  const missing = lacking(shopPools(), s.b.cost);
   if (Object.keys(missing).length) {
     if (s.hintCd <= 0) {
       s.hintCd = 4;
-      fxPlayerMsg(p.index, `Für ${s.b.name} fehlt im Burglager noch: ${matText(missing)}`, 3000);
+      fxPlayerMsg(p.index, `Für ${s.b.name} fehlt im Lager noch: ${matText(missing)}`, 3000);
     }
     return;
   }
-  for (const [m, n] of Object.entries(s.b.cost)) store[m] -= n;
+  spend(shopPools(), s.b.cost);
   placeBuild(s.b.id);
   emit(['b', s.b.id]);
   fxGlobalMsg(`${s.b.icon} ${s.b.name} gebaut! ${s.b.done}`, 5000);
@@ -1878,15 +2092,17 @@ function poseBuilds(dt) {
   padPulse += dt;
   unloadPad.material.opacity = 0.75 + Math.sin(padPulse * 3) * 0.25;
   for (const s of sites) {
-    const ready = Object.entries(s.b.cost).every(([m, n]) => store[m] >= n);
+    const locked = s.b.needDragon && !dragonReady();
+    const ready = !locked && affords(shopPools(), s.b.cost);
     const state = built[s.b.id] ? 'built' : ready ? 'ready' : 'normal';
-    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? (s.b.tool ? '✔ habt ihr' : '✔ gebaut') : matText(s.b.cost), state });
+    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? (s.b.tool || s.b.gear ? '✔ habt ihr' : '✔ gebaut') : locked ? 'erst 🐉' : matText(s.b.cost), state });
     s.pad.material.opacity = state === 'ready' ? 0.75 + Math.sin(padPulse * 5) * 0.25 : 1;
   }
   const bar = $('store');
   if (bar) {
     bar.hidden = !(kid && started);
-    const t = `🏰 Burglager: ${MATERIALS.map((m) => `${MAT_ICON[m]} ${store[m]}`).join('  ')}`;
+    const own = forts.filter((f) => players[f.i] && visible(f.i)).map((f) => `🚩 ${mode === 'local' ? players[f.i].name + ' ' : 'Festung '}${fortFill(f)}/${fortCap(f)}`);
+    const t = `🏰 Burglager: ${MATERIALS.map((m) => `${MAT_ICON[m]} ${store[m]}`).join('  ')}${own.length ? '   ·   ' + own.join('  ') : ''}`;
     if (bar.textContent !== t) bar.textContent = t;
   }
 }
@@ -1899,6 +2115,7 @@ function resetBuilds() {
   }
   for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === HOME.x + TOWER_REL.x && c.z === HOME.z + TOWER_REL.z)) circles.splice(circles.indexOf(c), 1);
   setTowerClimb(false);
+  setDragonBasket(false);
   if (bakeryBlock.box) { boxes.splice(boxes.indexOf(bakeryBlock.box), 1); circles.splice(circles.indexOf(bakeryBlock.oven), 1); bakeryBlock.box = bakeryBlock.oven = null; }
   for (const b of bigBubbles) scene.remove(b.m);
   bigBubbles.length = 0;
@@ -2428,7 +2645,21 @@ function travelTo(p, i) {
 // Jeder Spieler hat eine Festung. Am Anfang ist sie eingepackt (Bündel auf dem Rücken).
 // F (Spieler 2: -, Touch: 🏰) stellt sie vor einem auf. Drinnen F drücken packt sie wieder ein: so kann man umziehen.
 // In der Mitte ist eine Fläche zum Ausbauen (Kosten aus dem Burglager). In der Festung ist man sicher und satt.
-const forts = [0, 1].map((i) => ({ i, x: 0, z: 0, q: 0, level: 1, packed: true, model: null, boxes: [], pad: null, hintCd: 0, key: '' }));
+const forts = [0, 1].map((i) => ({ i, x: 0, z: 0, q: 0, level: 1, packed: true, model: null, boxes: [], pad: null, hintCd: 0, key: '',
+  store: Object.fromEntries(MATERIALS.map((m) => [m, 0])) }));
+const fortCap = (f) => FORT_LEVELS[f.level].cap;
+const fortFill = (f) => MATERIALS.reduce((n, m) => n + f.store[m], 0);
+const fortPets = (f) => animals.filter((a) => !a.dying && ((a.state === 'fort' && a.fort === f.i) || (a.state === 'hop' && a.hop.fort === f.i))).length;
+// Ein Punkt in der Festung (lokal -> Welt)
+const fortPoint = (f, x, z) => { const [ox, oz] = rot(f.q, x, z); return { x: f.x + ox, z: f.z + oz }; };
+// Lager-Fläche in jeder Festung: draufstellen, dann kommt der Rucksack ins Festungslager
+const fortStorePads = forts.map(() => {
+  const pad = makePad('#40c4ff');
+  pad.scale.setScalar(0.75);
+  pad.visible = false;
+  scene.add(pad);
+  return pad;
+});
 const fortPads = forts.map((f) => {
   const pad = makePad('#ffd54f');
   pad.visible = false;
@@ -2453,6 +2684,8 @@ function showFort(f) {
     boxes.push(...f.boxes);
     const [px, pz] = rot(f.q, 0, 1.2);
     fortPads[f.i].position.set(f.x + px, 0.08, f.z + pz);
+    const sp = fortPoint(f, FORT_STORE.x, FORT_STORE.z);
+    fortStorePads[f.i].position.set(sp.x, 0.09, sp.z);
   }
   grassRects.extra = forts.filter((g) => !g.packed).map((g) => ({ x1: g.x - FORT_HALF, z1: g.z - FORT_HALF, x2: g.x + FORT_HALF, z2: g.z + FORT_HALF }));
   refreshGrassRects();
@@ -2497,8 +2730,11 @@ function fortAction(p) {
     return;
   }
   if (inFort(f, pos.x, pos.z)) {
+    const pets = animals.filter((a) => !a.dying && a.state === 'fort' && a.fort === f.i);
+    for (const a of pets) { a.state = 'follow'; a.owner = p; }
     f.packed = true;
     showFort(f);
+    if (pets.length) later(4.2, () => fxPlayerMsg(p.index, `🐾 Deine ${pets.length} Tiere aus der Festung laufen mit dir mit.`, 3000));
     fxFloat('📦 Eingepackt!', '#ffffff', pos);
     fxSfx('poof');
     fxPlayerMsg(p.index, '📦 Festung eingepackt! Lauf dahin, wo du wohnen willst, und stell sie dort wieder auf.', 4000);
@@ -2517,18 +2753,42 @@ function updateForts(dt) {
     const p = alivePlayers().find((q) => Math.abs(q.root.position.x - pad.x) < 2 && Math.abs(q.root.position.z - pad.z) < 2);
     f.upCd = (f.upCd || 0) - dt;
     if (next && p && f.upCd <= 0) {
-      const missing = {};
-      for (const [m, n] of Object.entries(next.cost)) if (store[m] < n) missing[m] = n - store[m];
+      const missing = lacking([f.store, store], next.cost);
       if (Object.keys(missing).length) {
-        if (f.hintCd <= 0) { f.hintCd = 4; fxPlayerMsg(p.index, `Für die ${next.name} fehlt im Burglager noch: ${matText(missing)}`, 3000); }
+        if (f.hintCd <= 0) { f.hintCd = 4; fxPlayerMsg(p.index, `Für die ${next.name} fehlt noch: ${matText(missing)} (es zählt, was im Festungslager und im Burglager liegt)`, 3500); }
       } else {
-        for (const [m, n] of Object.entries(next.cost)) store[m] -= n;
+        spend([f.store, store], next.cost);
         f.level++;
         f.upCd = 4;   // nicht gleich die nächste Stufe hinterher
         showFort(f);
         fxSfx('levelUp');
-        fxGlobalMsg(`🏰 Die Festung von ${players[f.i]?.name || 'Spieler ' + (f.i + 1)} ist jetzt eine ${next.name}!`, 4500);
+        fxGlobalMsg(`🏰 Die Festung von ${players[f.i]?.name || 'Spieler ' + (f.i + 1)} ist jetzt eine ${next.name}! Ins Lager passen jetzt ${next.cap} Sachen und ${next.pets} Tiere wohnen darin.`, 5000);
       }
+    }
+    // Festungslager: Rucksack ausladen, aber nur so viel, wie hineinpasst
+    const sp = fortStorePads[f.i].position;
+    for (const q of alivePlayers()) {
+      if (!packCount(q) || !onPad(q.root.position, sp.x, sp.z, 1.6)) continue;
+      const room = fortCap(f) - fortFill(f);
+      if (room <= 0) {
+        if ((q.fortFullT || 0) < performance.now()) {
+          q.fortFullT = performance.now() + 6000;
+          fxPlayerMsg(q.index, `📦 Das Festungslager ist voll (${fortCap(f)} von ${fortCap(f)})! Bau die Festung aus, dann passt mehr hinein. Oder bring die Sachen ins Burglager.`, 4000);
+        }
+        continue;
+      }
+      const moved = {};
+      let left = room;
+      for (const m of MATERIALS) {
+        const k = Math.min(q.pack[m], left);
+        if (!k) continue;
+        moved[m] = k; q.pack[m] -= k; f.store[m] += k; left -= k;
+      }
+      const icons = MATERIALS.flatMap((m) => Array(moved[m] || 0).fill(MAT_ICON[m]));
+      const to = fortPoint(f, -FORT_HALF + 1.6, -0.3);
+      flyToChest(q.root.position, icons, to);
+      emit(['fs', q.root.position.x, q.root.position.z, icons, [to.x, to.z]]);
+      fxPlayerMsg(q.index, `📦 Ab ins Festungslager: ${matText(moved)} (${fortFill(f)} von ${fortCap(f)} voll)${packCount(q) ? '. Mehr passt nicht hinein, bau die Festung aus!' : ''}`, 3500);
     }
     // Drinnen: Energie kommt schnell zurück
     for (const q of alivePlayers()) if (inFort(f, q.root.position.x, q.root.position.z)) q.hp = Math.min(100, q.hp + 4 * dt);
@@ -2543,8 +2803,14 @@ function poseForts(dt) {
     if (pad.visible) {
       const next = FORT_LEVELS[f.level + 1];
       drawPad(pad, next
-        ? { icon: '🏰', title: 'Ausbauen', line: matText(next.cost), state: Object.entries(next.cost).every(([m, n]) => store[m] >= n) ? 'ready' : 'normal' }
+        ? { icon: '🏰', title: 'Ausbauen', line: matText(next.cost), state: affords([f.store, store], next.cost) ? 'ready' : 'normal' }
         : { icon: '🏰', title: FORT_LEVELS[f.level].name, line: '✔ fertig', state: 'built' });
+    }
+    const sPad = fortStorePads[i];
+    sPad.visible = pad.visible;
+    if (sPad.visible) {
+      const full = fortFill(f) >= fortCap(f);
+      drawPad(sPad, { icon: '📦', title: 'Lager', line: full ? `voll ${fortFill(f)}/${fortCap(f)}` : `${fortFill(f)} / ${fortCap(f)}`, state: full ? 'ready' : 'normal' });
     }
     if (f.model?.userData.flag) f.model.userData.flag.rotation.y = Math.sin(performance.now() / 400 + i) * 0.25;
     // Bündel auf dem Rücken, solange die Festung eingepackt ist
@@ -2639,7 +2905,7 @@ function resetWorldStuff() {
   treasures = 0;
   resetField();
   HOUSES.forEach((h) => { h.full = true; h.t = 0; });
-  forts.forEach((f) => { f.packed = true; f.level = 1; showFort(f); });
+  forts.forEach((f) => { f.packed = true; f.level = 1; for (const m of MATERIALS) f.store[m] = 0; showFort(f); });
   worldState.bigFound = {};
   setWorldLevel(0);
   farm.trough = 10;
@@ -2740,7 +3006,8 @@ function buildSnapshot() {
       r2(p.attackT), r2(p.attackDur), r2(p.dead), p.out ? 1 : 0, p.kills, p.moving, p.apples, MATERIALS.map((m) => p.pack[m]), p.toolShow, r2(p.root.position.y), Math.round(p.food ?? 100)]),
     e: enemies.map((e) => [e.id, e.archer ? 1 : 0, r2(e.root.position.x), r2(e.root.position.z), r2(e.root.rotation.y),
       e.hp, r2(e.wind), r2(e.strike), r2(e.dying), e.moving ? 1 : 0]),
-    a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd), c.state === 'stall' ? Math.round(c.food ?? 100) : -1]),
+    a: animals.map((c) => [c.id, c.type, r2(c.root.position.x), r2(c.root.position.z), r2(c.root.rotation.y), r2(c.dying), c.hp, r2(c.spd), c.state === 'stall' ? Math.round(c.food ?? 100) : -1,
+      r2(c.root.position.y), r2(c.root.scale.x)]),
     i: items.map((it) => [it.id, it.type, r2(it.g.position.x), r2(it.g.position.z)]),
     r: projectiles.map((pr) => [pr.id, pr.kind, pr.owner, r2(pr.m.position.x), r2(pr.m.position.y), r2(pr.m.position.z),
       r2(pr.vel.x), r2(pr.vel.y), r2(pr.vel.z)]),
@@ -2756,6 +3023,7 @@ function buildSnapshot() {
     tr: farm.trough,
     hl: houseKey(),
     ft: fortKey(),
+    fs: forts.map((f) => MATERIALS.map((m) => f.store[m])),
     wl: [worldState.level, Object.keys(worldState.bigFound)],
     wf: fieldKey(),
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
@@ -2810,8 +3078,9 @@ function applySnapshot(s) {
     (e) => scene.remove(e.root));
   syncMap(remote.animals, s.a,
     ([id, type, x, z]) => Object.assign(makeAnimalEntity(type, x, z), { id }),
-    (c, [, , x, z, ry, dying, hp, spd, food]) => {
-      c.tx = x; c.tz = z; c.root.rotation.y = ry; c.dying = dying; c.spd = spd;
+    (c, [, , x, z, ry, dying, hp, spd, food, y, sc]) => {
+      c.tx = x; c.tz = z; c.ty = y || 0; c.root.rotation.y = ry; c.dying = dying; c.spd = spd;
+      c.root.scale.setScalar(sc || 1);
       if (hp !== c.hp) { c.hp = hp; c.bar.visible = hp > 0; drawBar(c.bar, hp / c.maxHp); }
       if (food >= 0 && food !== c.food) { c.food = food; c.bar.visible = food < 40; drawBar(c.bar, food / 100); }
     },
@@ -2837,6 +3106,7 @@ function applySnapshot(s) {
   applyFieldKey(s.wf);
   applyHouseKey(s.hl);
   applyFortKey(s.ft);
+  if (s.fs) s.fs.forEach((row, i) => { if (forts[i]) MATERIALS.forEach((m, k) => (forts[i].store[m] = row[k] || 0)); });
   if (s.wl) { if (s.wl[0] !== worldState.level) setWorldLevel(s.wl[0]); worldState.bigFound = Object.fromEntries((s.wl[1] || []).map((id) => [id, true])); }
   const seenB = new Set();
   for (const [id, sx, sz, ex, ez, t] of s.bb || []) {
@@ -2887,6 +3157,7 @@ function applySnapshot(s) {
     if (type === 'rk') { const M = MASSIFS[a], cell = M && M.cells[b]; if (cell && cell.solid) crackCell(M, cell); }
     if (type === 'u') flyToChest({ x: a, z: b }, c);
     if (type === 'ft') flyToChest({ x: a, z: b }, c, TROUGH);
+    if (type === 'fs') flyToChest({ x: a, z: b }, c, { x: d[0], z: d[1] });
   }
 }
 
@@ -3028,8 +3299,14 @@ function fillBag(p) {
     ...inPack,
     [`🍎 Äpfel für Tiere: ${p.apples}`, p.apples > 0],
   ]);
-  rows($('bagTools'), BUILDS.filter((b) => b.tool).map((b) => [`${b.icon} ${b.name}: ${built[b.id] ? 'hast du ✔' : 'noch nicht'}`, !!built[b.id]]));
+  rows($('bagTools'), BUILDS.filter((b) => b.tool || b.gear).map((b) => [`${b.icon} ${b.name}: ${built[b.id] ? 'hast du ✔' : 'noch nicht'}`, !!built[b.id]]));
   rows($('bagStore'), MATERIALS.map((m) => [`${MAT_ICON[m]} ${MAT_NAME[m]}: ${store[m]}`, store[m] > 0]));
+  const f = forts[p.index];
+  rows($('bagFort'), [
+    [f.packed ? '📦 Deine Festung ist eingepackt, das Lager trägst du mit.' : `📦 ${fortFill(f)} von ${fortCap(f)} Plätzen voll (${FORT_LEVELS[f.level].name})`, true],
+    ...MATERIALS.filter((m) => f.store[m] > 0).map((m) => [`${MAT_ICON[m]} ${MAT_NAME[m]}: ${f.store[m]}`, true]),
+    [`🐾 Tiere in der Festung: ${f.packed ? 0 : fortPets(f)} von ${FORT_LEVELS[f.level].pets}`, !f.packed && fortPets(f) > 0],
+  ]);
 }
 $('bagBtn').onclick = () => toggleBag(localPlayer());
 $('bagClose').onclick = () => ($('bagBox').hidden = true);
@@ -3047,6 +3324,8 @@ const HELP = () => [
   ['🍴 Hunger und Bauernhof', 'Wenn du Hunger hast, iss Eier 🥚, Milch 🥛, Äpfel 🍎 oder Brot 🍞. Kühe im Stall geben Milch, Hühner legen Eier. Hinter dem Stall wächst Getreide: mit der Sense mähen und in den Futtertrog schütten, sonst laufen eure Tiere weg. Übriges Getreide im Burglager wird in der Bäckerei zu Brot.'],
   ['🏘️ Dörfer und Rätsel', 'In den Dörfern könnt ihr mit den Leuten reden. Wo ein ❓ auf der Karte ist, wartet ein Rätsel. In die Häuser kann man hineingehen, drinnen steht eine Truhe mit Gold 💰. Aber Psst, nicht erwischen lassen!'],
   ['🏰 Eigene Festung', `Lauf auf eine freie Wiese und drück ${isTouch ? '🏰' : 'F'}, dann steht deine Festung da. Drinnen bist du sicher und bekommst keinen Hunger. In der Mitte kannst du sie ausbauen. Zum Umziehen hineingehen und nochmal drücken.`],
+  ['📦 Festungslager', `In deiner Festung ist links vorne die Lager-Fläche 📦. Stell dich drauf, dann kommt dein Rucksack ins Festungslager. Hinein passen ${FORT_LEVELS.slice(1).map((l) => `${l.cap} (${l.name})`).join(', ')} Sachen: je größer die Festung, desto mehr. Zum Bauen und Ausbauen zählt, was im Festungslager und im Burglager liegt.`],
+  ['🐉 Drache, Sternenfeuer und Korb', `Mit ${isTouch ? '🔄' : 'Q'} spuckt der Drache Sternenfeuer, das freche Schelme verzaubert. Das geht im Flug und am Boden: neben dem gelandeten Drachen stehen und ${isTouch ? '🔄' : 'Q'} drücken. In der Werkstatt gibt es den Drachenkorb 🧺. Lande, lauf mit deinen Tieren zum Drachen, dann hüpfen sie hinein (5 Hühner, 2 Kühe, 2 Wildschweine, 1 Reh). Bei deiner Festung oder beim Stall hüpfen sie wieder heraus.`],
   ['⛰️ Berge und Schätze', 'Die Berge sind aus Felsblöcken. Mit der Spitzhacke ⛏️ haust du Höhlen hinein. In den Bergen sind Schatztruhen 💎 versteckt. Wenn es glitzert, bist du ganz nah!'],
   ['🗺️ Weltkarte und Reisesteine', `Mit ${isTouch ? '🗺️' : 'M'} siehst du die Weltkarte. Mit jedem Abenteuer (Tiere befreien, Schätze finden, bauen, Rätsel lösen) wird die Welt größer. Auf einem Reisestein (blauer Kreis) könnt ihr in ein anderes Gebiet reisen.`],
 ];
@@ -3189,8 +3468,10 @@ function makeSave() {
       store: { ...store },
       built: Object.keys(built).filter((k) => built[k]),
       freed: CAGE_SPOTS.map((_, i) => i).filter((i) => !cages.some((c) => c.idx === i && !c.dying)),
-      stall: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => a.type),
-      stallFood: animals.filter((a) => !a.dying && (a.state === 'stall' || a.state === 'follow')).map((a) => Math.round(a.state === 'stall' ? a.food ?? 100 : 100)),
+      stall: animals.filter((a) => !a.dying && ['stall', 'follow', 'basket', 'hop'].includes(a.state) && !(a.state === 'hop' && a.hop.fort >= 0)).map((a) => a.type),
+      stallFood: animals.filter((a) => !a.dying && ['stall', 'follow', 'basket', 'hop'].includes(a.state) && !(a.state === 'hop' && a.hop.fort >= 0)).map((a) => Math.round(a.state === 'stall' ? a.food ?? 100 : 100)),
+      fortPets: animals.filter((a) => !a.dying && (a.state === 'fort' || (a.state === 'hop' && a.hop.fort >= 0))).map((a) => [a.state === 'fort' ? a.fort : a.hop.fort, a.type]),
+      fortStore: forts.map((f) => ({ ...f.store })),
       trough: farm.trough,
       field: fieldKey(),
       houses: houseKey(),
@@ -3244,6 +3525,18 @@ function applySave(s) {
     applyFieldKey(s.field);
     applyHouseKey(s.houses);
     applyFortKey(s.forts);
+    forts.forEach((f, i) => {
+      let room = fortCap(f);
+      for (const m of MATERIALS) { const n = Math.min(room, int(s.fortStore?.[i]?.[m], 0, 9999)); f.store[m] = n; room -= n; }
+    });
+    (s.fortPets || []).slice(0, 30).forEach(([i, type]) => {
+      const f = forts[i];
+      if (!f || f.packed || !PRODUCE[type] || fortPets(f) >= FORT_LEVELS[f.level].pets) return;
+      const pt = fortPoint(f, (Math.random() - 0.5) * 6, -2 + Math.random() * 3);
+      const a = makeAnimalEntity(type, pt.x, pt.z);
+      Object.assign(a, { id: nextId++, heading: Math.random() * 6.28, wanderT: 0, wander: false, fleeT: 0, state: 'fort', fort: i, prodT: PRODUCE[type][1] / 2 });
+      animals.push(a);
+    });
     // Ältere Spielstände: die Welt war schon ganz offen
     setWorldLevel(s.world ? int(s.world.level, 0, WORLD_LEVELS.length - 1) : WORLD_LEVELS.length - 1);
     worldState.bigFound = Object.fromEntries((s.world?.big || []).filter((id) => SECTORS.some((x) => x.id === id)).map((id) => [id, true]));
@@ -3355,7 +3648,8 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, worldState, setWorldLevel, stones, travelTo, adventures, get treasures() { return treasures; } };
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, worldState, setWorldLevel, stones, travelTo, adventures, get treasures() { return treasures; },
+  enemies, projectiles, shoot, lineBlocked, get wizard() { return wizard; }, PUZZLES, dragonList, fortFill, fortCap, tryBuild, sites };
 
 // ================= Spielschleife =================
 const clock = new THREE.Clock();
@@ -3402,6 +3696,7 @@ function step(dt) {
       updateWizardLogic(dt);
       updateVillages(dt, players);
       updateDragons(dt, players);
+      if (kid) updateBasket();
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));

@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { std, mesh, WORLD, bounds } from './util.js';
+import { std, mesh, WORLD, bounds, blocked } from './util.js';
 import { HOME, ENEMY_CASTLE, MOUNTAINS } from './world.js';
 import { VILLAGES } from './map.js';
 import { floorAt, TOWER_REL, TOWER_TOP } from './castlewalk.js';
@@ -8,6 +8,8 @@ import { floorAt, TOWER_REL, TOWER_TOP } from './castlewalk.js';
 // Wenn alle Dorfrätsel gelöst sind und der Festturm steht, landen zwei Drachen am Turm.
 // Oben auf der Turmplattform aufsteigen (Zauber-Taste), dann fliegt man über die ganze Landschaft.
 // Steuerung im Flug: vor/zurück = höher/tiefer, links/rechts = lenken, Zauber-Taste = landen, Wechsel-Taste = Feuer.
+// Das Feuer spuckt Sterne, die freche Schelme verzaubern. Am Boden: neben dem gelandeten Drachen die Wechsel-Taste drücken.
+// Mit dem Drachenkorb (Werkstatt) kann der Drache Tiere tragen, siehe main.js.
 
 const SEAT = 2.45;                       // so hoch sitzt der Reiter über den Füßen des Drachen
 const SPEED = 17;                        // Fluggeschwindigkeit
@@ -148,8 +150,21 @@ function makeDragon(c) {
     body.add(pivot);
     wings.push({ pivot, s });
   }
+  // Drachenkorb auf dem Rücken hinter dem Reiter (erst sichtbar, wenn er gebaut ist)
+  const basket = new THREE.Group();
+  const wicker = std(0xc8a165, { roughness: 1 }), rim = std(0x8d6e3f);
+  basket.add(mesh(new THREE.BoxGeometry(2.1, 0.12, 2.3), wicker, 0, 0, 0));
+  for (const [x, z, w, d] of [[-1.02, 0, 0.1, 2.3], [1.02, 0, 0.1, 2.3], [0, -1.12, 2.1, 0.1], [0, 1.12, 2.1, 0.1]]) {
+    basket.add(mesh(new THREE.BoxGeometry(w, 0.75, d), wicker, x, 0.38, z));
+    basket.add(mesh(new THREE.BoxGeometry(w + 0.06, 0.1, d + 0.06), rim, x, 0.78, z));
+  }
+  for (const s of [-1, 1]) basket.add(mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), rim, s * 1.08, -0.35, 0));
+  basket.position.set(0, 2.45, -1.75);
+  basket.visible = false;
+  body.add(basket);
+  const spikes = body.children.filter((o) => o.geometry?.type === 'ConeGeometry');
   root.traverse((o) => { if (o.isMesh && !o.material.userData.fire) o.castShadow = true; });
-  return { root, body, head, flame, tail, legs, wings };
+  return { root, body, head, flame, tail, legs, wings, basket, spikes };
 }
 
 export function initDragons(scene, a) {
@@ -159,7 +174,7 @@ export function initDragons(scene, a) {
     m.root.visible = false;
     scene.add(m.root);
     dragons.push({ k, m, perch: pc, state: 'away', rider: -1, x: pc.x, y: PERCH_Y, z: pc.z, yaw: pc.yaw, bank: 0, pitch: 0,
-      fire: 0, flap: Math.random() * 6, t: 0, target: null, prevAtk: true });
+      fire: 0, flap: Math.random() * 6, t: 0, target: null, prevAtk: true, last: -1 });
   });
 }
 
@@ -206,6 +221,7 @@ export function dragonMount(p) {
 function dismount(d, p, x, y, z) {
   p.riding = null;
   d.rider = -1;
+  d.last = p.index;
   p.root.position.set(x, y, z);
   p.holdAtk = true;
   p.cooldown = Math.max(p.cooldown || 0, 0.4);
@@ -220,7 +236,7 @@ function landingSpot(x, z) {
       if (Math.abs(px) > bounds.r - 6 || Math.abs(pz) > bounds.r - 6) continue;
       // Platz für den Drachen und für den Reiter daneben
       if (floorAt(px, pz, 0) === 0 && floorAt(px + 1.5, pz, 0) === 0 && floorAt(px - 1.5, pz, 0) === 0
-        && floorAt(px, pz + 1.5, 0) === 0 && floorAt(px, pz - 1.5, 0) === 0) return { x: px, z: pz };
+        && floorAt(px, pz + 1.5, 0) === 0 && floorAt(px, pz - 1.5, 0) === 0 && !blocked(px, pz, 2.2)) return { x: px, z: pz };
     }
   }
   return null;
@@ -275,7 +291,7 @@ export function dragonFly(p, dt) {
   const d = dragons[p.riding];
   if (!d || d.rider !== p.index) { p.riding = null; return false; }
   const inp = p.input;
-  if (p.swapReq && d.fire <= 0) { d.fire = 1.4; api.sfx('poof'); }
+  if (p.swapReq && d.fire <= 0) { d.fire = 1.4; api.sfx('poof'); api.breath(d, p, true); }
   const pressed = inp.attack && !d.prevAtk;
   d.prevAtk = inp.attack;
   if (d.state === 'fly') {
@@ -338,7 +354,13 @@ export function updateDragons(dt, players) {
       d.x = TOWER.x + 160 * (d.k ? -1 : 1); d.z = TOWER.z + 140; d.y = 60;
       d.yaw = Math.atan2(TOWER.x - d.x, TOWER.z - d.z);
     }
-    if (d.state === 'rest' && (d.t += dt) > 6) d.state = 'return';
+    if (d.state === 'rest') {
+      // Er wartet, solange sein Reiter in der Nähe ist (zum Beispiel, um Tiere in den Korb zu scheuchen)
+      d.t += dt;
+      const q = players[d.last];
+      const near = q && !q.out && q.riding == null && Math.hypot(q.root.position.x - d.x, q.root.position.z - d.z) < 16;
+      if (d.t > (near ? 120 : 6)) d.state = 'return';
+    }
     if (d.state === 'return' && glideTo(d, { x: d.perch.x, y: PERCH_Y, z: d.perch.z, yaw: d.perch.yaw }, dt, 13)) d.state = 'perch';
     if (d.state === 'perch') {
       turnTo(d, d.perch.yaw, 2, dt);
@@ -362,6 +384,39 @@ export function updateDragons(dt, players) {
     hintT[p.index] = performance.now() + 25000;
     if (!ok) api.msg(p.index, `🐉 Hier oben landet ein Drache, wenn ihr alle Dorfrätsel gelöst habt (noch ${api.missing()}). Schaut auf der kleinen Karte nach den ❓!`, 5000);
     else if (dragons.some((d) => d.state === 'perch')) api.msg(p.index, `🐉 Drück ${api.talkKey()}, um auf den Drachen zu steigen!`, 4000);
+  }
+}
+
+// Am Boden: neben dem gelandeten Drachen die Wechsel-Taste drücken, dann spuckt er Sternenfeuer
+export function dragonGroundFire(p) {
+  if (p.riding != null || p.dead > 0 || p.out) return false;
+  const pos = p.root.position;
+  const d = dragons.find((q) => q.state === 'rest' && Math.hypot(q.x - pos.x, q.z - pos.z) < 7);
+  if (!d) return false;
+  if (d.fire > 0) return true;
+  // zum nächsten Ziel drehen, sonst in Blickrichtung des Spielers
+  const t = api.fireTarget(d);
+  d.yaw = t ? Math.atan2(t.x - d.x, t.z - d.z) : p.heading;
+  d.fire = 1.4;
+  d.t = Math.min(d.t, 10);
+  api.sfx('poof');
+  api.breath(d, p, false);
+  return true;
+}
+
+// Wo im Korb ein Tier sitzt (Welt-Koordinaten); slot 0 bis 9
+export function basketSpot(d, slot) {
+  const sx = ((slot % 3) - 1) * 0.6, sz = (Math.floor(slot / 3) - 1.5) * 0.55 - 1.75;
+  const c = Math.cos(d.yaw), s = Math.sin(d.yaw);
+  return { x: d.x + sx * c + sz * s, y: d.y + 2.55, z: d.z - sx * s + sz * c };
+}
+// Wo das Maul ist (für das Sternenfeuer)
+export const mouthOf = (d) => ({ x: d.x + Math.sin(d.yaw) * 4, y: d.y + 3.1, z: d.z + Math.cos(d.yaw) * 4 });
+export const dragonList = () => dragons;
+export function setDragonBasket(on) {
+  for (const d of dragons) {
+    d.m.basket.visible = on;
+    d.m.spikes.forEach((sp) => (sp.visible = !on));
   }
 }
 
