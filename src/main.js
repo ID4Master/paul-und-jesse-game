@@ -13,7 +13,7 @@ import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, a
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog, pageMsg, setMsgSplit } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
-import { initGamepads, pollGamepads, padIn, padUsed, PAD_HELP } from './gamepad.js';
+import { initGamepads, pollGamepads, padIn, padUsed, PAD_HELP, PAD_OPTS, cyclePad, padLabel } from './gamepad.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
   villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
 import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRider, riderCamera, dragonMapMarks, dragonSnapshot, applyDragonSnapshot,
@@ -3262,7 +3262,7 @@ $('gmInvite').onclick = () => {
 
 // ================= Rucksack, Tipps und Anzeige (Knöpfe oben rechts) =================
 // Allein oder zu zweit an einer Tastatur hält ein offenes Fenster das Spiel an, wie das Menü.
-const PANELS = ['bagBox', 'tipsBox', 'hudBox'];
+const PANELS = ['bagBox', 'tipsBox', 'hudBox', 'padBox'];
 const panelOpen = () => PANELS.some((id) => !$(id).hidden);
 function closePanels() { PANELS.forEach((id) => ($(id).hidden = true)); $('gameMenu').hidden = true; $('worldMap').hidden = true; }
 function openPanel(id) { PANELS.forEach((x) => ($(x).hidden = x !== id)); }
@@ -3401,6 +3401,15 @@ function toggleHud() {
 applyHud();
 
 // ---------- Game-Controller ----------
+for (const k of Object.keys(PAD_OPTS)) {
+  const b = document.createElement('button');
+  b.className = 'big';
+  b.textContent = padLabel(k);
+  b.onclick = () => { cyclePad(k); b.textContent = padLabel(k); };
+  $('padOpts').appendChild(b);
+}
+$('gmPad').onclick = () => { $('gameMenu').hidden = true; openPanel('padBox'); };
+$('padClose').onclick = () => ($('padBox').hidden = true);
 initGamepads({
   started: () => started,
   mode: () => mode,
