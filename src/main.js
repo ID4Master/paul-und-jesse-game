@@ -13,6 +13,7 @@ import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, a
 import { makeBar, drawBar, hpColor, floatText, updateFloaters, initAudio, sfx, showMsg, msgLog, pageMsg, setMsgSplit } from './ui.js';
 import { hostGame, joinGame, randomCode } from './net.js';
 import { startVoice, stopVoice } from './voice.js';
+import { initGamepads, pollGamepads, padIn, padUsed, PAD_HELP } from './gamepad.js';
 import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dialogStep, pickDialog, nearNpc, renderDialog, onDialogPick,
   villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
 import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRider, riderCamera, dragonMapMarks, dragonSnapshot, applyDragonSnapshot,
@@ -112,6 +113,7 @@ initDragons(scene, {
   breath: (d, p, flying) => dragonBreath(d, p, flying),
   fireTarget: (d) => fireTargets(d, mouthOf(d), 26, false)[0]?.root.position,
   flyHelp: (p) => {
+    if (padUsed(p.index)) return 'Controller: Stick hoch/runter: höher/tiefer, links/rechts: lenken, A: landen, X: Feuer!';
     if (isTouch && (mode !== 'local')) return 'Joystick hoch/runter: höher/tiefer, links/rechts: lenken. 💬-Knopf: landen, 🔄: Feuer!';
     const k = p.keymap === KEYMAPS.p2 ? ['Pfeil hoch/runter', 'Pfeil links/rechts', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W/S', 'A/D', 'Leertaste', 'Q'] : ['W/S oder Pfeile', 'A/D oder Pfeile', 'Leertaste/Enter', 'Q'];
     return `${k[0]}: höher/tiefer, ${k[1]}: lenken, ${k[2]}: landen, ${k[3]}: Feuer!`;
@@ -880,11 +882,12 @@ addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 const any = (list) => list.some((c) => keys[c]);
 function readLocalInput(p) {
   const m = p.keymap;
+  const pad = padIn[p.index];
   const clamp = (v) => Math.max(-1, Math.min(1, v));
   p.input = {
-    fwd: clamp((any(m.fwd) ? 1 : 0) - (any(m.back) ? 1 : 0) + touchIn.fwd),
-    turn: clamp((any(m.left) ? 1 : 0) - (any(m.right) ? 1 : 0) + touchIn.turn),
-    attack: any(m.attack) || touchIn.attack,
+    fwd: clamp((any(m.fwd) ? 1 : 0) - (any(m.back) ? 1 : 0) + touchIn.fwd + pad.fwd),
+    turn: clamp((any(m.left) ? 1 : 0) - (any(m.right) ? 1 : 0) + touchIn.turn + pad.turn),
+    attack: any(m.attack) || touchIn.attack || pad.attack,
   };
 }
 
@@ -3316,6 +3319,7 @@ const HELP = () => [
   ['🎮 Steuern', isTouch
     ? 'Links mit dem Kreis laufen. Rechts: 🪄 zaubern, 🔄 Zauber wechseln, 🏰 Festung, 🗺️ Weltkarte. Oben rechts: 🎒 Rucksack, 💡 Tipps, 👁️ Anzeige, ☰ Menü. In der Nachrichten-Box unten blätterst du mit ◀ ▶ zurück, 💬 holt sie wieder her.'
     : 'W A S D oder Pfeiltasten laufen, Leertaste oder Enter zaubern, Q oder Shift Zauber wechseln, F Festung, M Weltkarte, R Rucksack, T Tipps, N ältere Nachrichten in der Box unten, H Anzeige ein und aus, Esc schließt ein Fenster.'],
+  ['🕹️ Mit dem Controller', PAD_HELP],
   ['🪄 Zaubern und Schelme', 'Freche Schelme verzauberst du mit deinem Zauberstab. Je mehr du verzauberst, desto höher dein Level und desto besser deine Rüstung. Leuchtende Sachen am Boden geben dir für kurze Zeit einen Extra-Zauber.'],
   ['🐾 Tiere befreien', 'Der böse Zauberer hat Tiere in Käfige gesperrt. Befrei sie und bring sie in deinen Stall neben der Burg. Wilde Tiere kommen mit, wenn du sie mit einem Apfel 🍎 fütterst. Sind alle Tiere frei, wird der Zauberer zum Frosch!'],
   ['🎒 Sammeln und Burglager', `Holz, Steine, Seife, Sternenstaub, Getreide und Gold kommen in deinen Rucksack. Es passen ${PACK_SIZE} Sachen hinein. Auf der Ablagefläche vor eurer Burg fliegt alles ins Burglager.`],
@@ -3395,6 +3399,28 @@ function toggleHud() {
   showMsg('msg', hudOff.all ? 'Anzeige aus. Mit H wieder an.' : 'Anzeige wieder an.', 1500);
 }
 applyHud();
+
+// ---------- Game-Controller ----------
+initGamepads({
+  started: () => started,
+  mode: () => mode,
+  me: () => me,
+  players: () => players,
+  initAudio,
+  onConnect: () => showMsg('msg', '🕹️ Controller verbunden! Linker Stick: laufen, A: zaubern, X: Zauber wechseln, Y: Festung, B: Rucksack, Start: Menü.', 5000),
+  action: (i, what) => {
+    const p = players[i];
+    if (!p || p.source !== 'local') return;
+    if (what === 'swap') p.swapReq = true;
+    if (what === 'fort') p.fortReq = true;
+    if (what === 'map') toggleWorldMap(p);
+    if (what === 'bag') toggleBag(p);
+    if (what === 'tips') toggleTips();
+    if (what === 'hud') toggleHud();
+    if (what === 'msgs') pageMsg(i);
+    if (what === 'menu') $('menuBtn').click();
+  },
+});
 
 const status = (html) => ($('netStatus').innerHTML = html);
 const netError = (err) => status('😕 Das hat nicht geklappt: ' + (err?.type === 'peer-unavailable' ? 'Code nicht gefunden.' : err?.message || err));
@@ -3660,6 +3686,7 @@ let lastFrame = performance.now();
 function tick() {
   lastFrame = performance.now();
   const dt = Math.min(clock.getDelta(), 0.05);
+  pollGamepads(dt);
   // Allein oder zu zweit an einer Tastatur hält das offene Menü das Spiel an
   if (!((gameMenuOpen() || panelOpen()) && (mode === 'single' || mode === 'local'))) step(dt);
   if (bagFor && !$('bagBox').hidden && (bagT -= dt) < 0) { bagT = 0.5; fillBag(bagFor); }   // Rucksack offen: Inhalt aktuell halten
