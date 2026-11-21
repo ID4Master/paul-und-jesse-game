@@ -4,7 +4,7 @@ import { mergeGeometries } from '../lib/BufferGeometryUtils.js';
 import { makeGrassField, makeFlowers, updateGrass } from './grass.js';
 import { brickTex, tileTex, grassTex, dirtTex, worldUVBox, worldUVCyl } from './textures.js';
 import { addWallWalk } from './castlewalk.js';
-import { PATHS, PATH_W, pathDist, nearVillage, nearFarm } from './map.js';
+import { PATHS, PATH_W, pathDist, nearVillage, nearFarm, nearSee } from './map.js';
 
 export const HOME = { x: 0, z: 80 };
 export const ENEMY_CASTLE = { x: 0, z: -100 };
@@ -312,7 +312,7 @@ export const freeSpot = (x, z) =>
     (x > -28 && x < -6 && z > 44 && z < 75) ||                      // Werkstatt
     (Math.abs(x) < 42 && z < -38 && z > -125) ||                    // Dorf und feindliche Burg
     Math.hypot(x - 52, z - 38) < 13 ||                              // Teich
-    nearFarm(x, z) ||                                               // Getreidefeld und Bäckerei
+    nearFarm(x, z) || nearSee(x, z, 2) ||                            // Getreidefeld, Bäckerei, großer See mit Bootswerft
     nearVillage(x, z, 4) || pathDist(x, z) < PATH_W);               // neue Dörfer und Wege dorthin
 
 export function randomFreeSpot() {

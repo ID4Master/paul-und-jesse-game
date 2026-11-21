@@ -6,7 +6,7 @@ import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCe
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS, HOUSES, houseAt } from './world.js';
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
-import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel } from './map.js';
+import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel, SEE, ISLANDS, WERFT } from './map.js';
 import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, FORT_STORE, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
 import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
@@ -18,6 +18,8 @@ import { buildVillages, setupVillages, updateVillages, poseVillages, talkTo, dia
   villageSnapshot, applyVillageSnapshot, villageSave, villageLoad, resetVillages, solvedCount, PUZZLES, drawMinimap, showMinimap, villageDebug } from './villages.js';
 import { initDragons, dragonMount, dragonFly, updateDragons, poseDragons, poseRider, riderCamera, dragonMapMarks, dragonSnapshot, applyDragonSnapshot,
   resetDragons, dragonDebug, dragonGroundFire, basketSpot, mouthOf, dragonList, setDragonBasket } from './dragon.js';
+import { buildLake, initBoats, boatBuilt, boatBoard, boatSail, updateBoats, poseBoats, poseSailor, sailorCamera, boatNear, boatMapMarks,
+  islandKey, applyIslandKey, islandsLooted, boatSnapshot, applyBoatSnapshot, resetBoats, boatDebug, boatDock, BOAT_TYPES } from './boats.js';
 
 const $ = (id) => document.getElementById(id);
 // iPads geben sich in Safari als Mac aus, haben aber einen Touchscreen
@@ -80,7 +82,7 @@ sun.shadow.bias = -0.0005;
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, far: 400 });
 scene.add(sun);
 
-buildWorld(scene, { low: lowGfx, sunDir: SUN_DIR, extra: buildVillages });
+buildWorld(scene, { low: lowGfx, sunDir: SUN_DIR, extra: (sc) => { buildVillages(sc); buildLake(sc); } });
 buildFarm(scene);
 makeTroughFill(scene);
 const grassRects = { houses: HOUSES.map((h) => ({ x1: h.x - h.w / 2 - 0.2, z1: h.z - h.d / 2 - 0.2, x2: h.x + h.w / 2 + 0.2, z2: h.z + h.d / 2 + 0.2 })), extra: [] };
@@ -117,6 +119,32 @@ initDragons(scene, {
     if (isTouch && (mode !== 'local')) return 'Joystick hoch/runter: höher/tiefer, links/rechts: lenken. 💬-Knopf: landen, 🔄: Feuer!';
     const k = p.keymap === KEYMAPS.p2 ? ['Pfeil hoch/runter', 'Pfeil links/rechts', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W/S', 'A/D', 'Leertaste', 'Q'] : ['W/S oder Pfeile', 'A/D oder Pfeile', 'Leertaste/Enter', 'Q'];
     return `${k[0]}: höher/tiefer, ${k[1]}: lenken, ${k[2]}: landen, ${k[3]}: Feuer!`;
+  },
+});
+
+// ================= Boote: Floß, Ruderboot und Segelschiff auf dem großen See =================
+initBoats(scene, {
+  msg: (i, text, ms) => fxPlayerMsg(i, text, ms),
+  float: (text, color, pos) => fxFloat(text, color, pos),
+  sfx: (name) => fxSfx(name),
+  talkKey,
+  blocked: (x, z, r) => blockedSpot(x, z, r),
+  sailHelp: (p, type) => {
+    const horn = type === 'ship';
+    if (padUsed(p.index)) return `Controller: Stick hoch: vorwärts, links/rechts: lenken, A am Ufer: aussteigen${horn ? ', X: Tröte' : ''}.`;
+    if (isTouch && mode !== 'local') return `Joystick: fahren und lenken. Zauber-Knopf am Ufer: aussteigen${horn ? ', 🔄: Tröte' : ''}.`;
+    const k = p.keymap === KEYMAPS.p2 ? ['Pfeiltasten', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W A S D', 'Leertaste', 'Q'] : ['W A S D oder Pfeile', 'Leertaste/Enter', 'Q'];
+    return `${k[0]}: fahren und lenken, ${k[1]} am Ufer: aussteigen${horn ? `, ${k[2]}: Tröte` : ''}.`;
+  },
+  loot: (isl, p, at) => {
+    isl.loot.forEach((type, k) => {
+      const a = (k / isl.loot.length) * Math.PI * 2;
+      dropItem(type, { x: at.x + Math.sin(a) * 1.2, z: at.z + Math.cos(a) * 1.2 });
+    });
+    fxSfx('levelUp');
+    fxFloat('🎁 Inselschatz! 🎁', '#ffd54f', at);
+    const left = 3 - islandsLooted();
+    fxGlobalMsg(left ? `🏝️ ${isl.name}: Schatz gefunden! Auf dem See warten noch ${left} ${left === 1 ? 'Inselschatz' : 'Inselschätze'}.` : '🏴‍☠️ Alle Inselschätze gefunden! Ihr seid echte Seefahrer! 🏴‍☠️', 6000);
   },
 });
 
@@ -276,6 +304,7 @@ function resetPlayer(p) {
 
 function respawn(p) {
   p.riding = null;
+  p.boat = null;
   p.root.position.set(HOME.x + p.startX, 0, HOME.z - 16);
   // Wer seine Festung aufgestellt hat, fängt dort wieder an
   const f = forts[p.index];
@@ -335,7 +364,7 @@ const alivePlayers = () => players.filter((p) => !p.dead && !p.out);
 function nearestPlayer(pos, maxDist) {
   let best = null, bestD = maxDist;
   for (const p of alivePlayers()) {
-    if (p.riding != null) continue;   // wer auf dem Drachen fliegt, wird nicht angegriffen
+    if (p.riding != null || p.boat != null) continue;   // wer auf dem Drachen fliegt oder Boot fährt, wird nicht angegriffen
     const d = p.root.position.distanceTo(pos);
     if (d < bestD) { best = p; bestD = d; }
   }
@@ -343,7 +372,7 @@ function nearestPlayer(pos, maxDist) {
 }
 
 function hurtPlayer(p, rawDmg) {
-  if (p.dead || p.out || p.riding != null) return;
+  if (p.dead || p.out || p.riding != null || p.boat != null) return;
   if (kid && inAnyFort(p.root.position)) return;   // in einer Festung ist man sicher
   // Bessere Rüstung = weniger Schaden
   const dmg = Math.max(1, Math.round(rawDmg * (1 - 0.08 * p.level)));
@@ -823,6 +852,7 @@ function autoTarget(p, range, maxAngle) {
 }
 
 function attack(p) {
+  if (kid && boatBoard(p)) { p.cooldown = 0.4; return; }   // am Ufer neben einem Boot: einsteigen
   if (dragonMount(p)) { p.cooldown = 0.4; return; }   // oben auf dem Turm: auf den Drachen steigen
   if (talkTo(p)) { p.cooldown = 0.3; return; }   // in der Nähe eines Bürgers: reden statt zaubern
   if (kid && useTool(p)) return;
@@ -941,6 +971,9 @@ function updatePlayerLogic(p, dt) {
     }
   } else if (dragonFly(p, dt)) {
     p.hp = 100;   // im Flug passiert einem nichts
+  } else if (boatSail(p, dt)) {
+    p.cooldown -= dt;
+    p.fortReq = false;
   } else if (dialogStep(p)) {
     p.hp = Math.min(100, p.hp + dt);   // im Gespräch bleibt man stehen
   } else {
@@ -1015,10 +1048,11 @@ function posePlayer(p, dt) {
   }
   animateHuman(p.h, p.walk, p.riding == null && !!p.moving, armR, armL);
   poseRider(p);
+  poseSailor(p);
   if (p.hurt > 0) { p.hurt -= dt; if (p.hurt <= 0) flash(p.h, 0); }
   updateHud(p);
   if (isTouch && p.index === me) updateAttackButton(p);
-  if (visible(p.index)) drawMinimap(p.index, players, dt, [...dragonMapMarks(), ...fortMarks()]);
+  if (visible(p.index)) drawMinimap(p.index, players, dt, [...dragonMapMarks(), ...fortMarks(), ...(kid ? boatMapMarks() : [])]);
 
   // Kamera hinter dem Spieler, rückt nur sanft näher, wenn eine Mauer oder ein Berg im Weg ist.
   // In einer Höhle geht sie tief unter die Felsdecke und bleibt im Gang.
@@ -1048,6 +1082,7 @@ function posePlayer(p, dt) {
   // Unten im Burghof: Kamera unter dem Wehrgang bleiben lassen, sonst sieht man nur Bretter
   if (py < 1 && underDeck(camPos.x, camPos.z)) camPos.y = Math.min(camPos.y, WALK_H - 0.9);
   if (riderCamera(p, camPos, camLook)) p.camDist = 7;   // auf dem Drachen: weiter hinten und über dem Drachen
+  if (sailorCamera(p, camPos, camLook)) p.camDist = 7;   // im Boot: hinter dem Boot
   if (!p.camInit) { p.cam.position.copy(camPos); p.camInit = true; }
   p.cam.position.lerp(camPos, 1 - Math.exp(-dt * 10));
   p.cam.lookAt(camLook);
@@ -1059,12 +1094,12 @@ function updateAttackButton(p) {
   const sp = p.special && p.weapon === p.special.type ? p.special : null;
   const pct = sp ? Math.max(0, Math.round((sp.t / (sp.max || 15)) * 100)) : 100;
   const talk = !!nearNpc(p.root.position);
-  const fly = p.riding != null;
-  const key = wIcon(p.weapon) + pct + talk + fly;
+  const fly = p.riding != null, sail = p.boat != null;
+  const key = wIcon(p.weapon) + pct + talk + fly + sail;
   if (key === atkKey) return;
   atkKey = key;
   const btn = $('tAttack');
-  btn.textContent = fly ? '🛬' : talk ? '💬' : wIcon(p.weapon);
+  btn.textContent = fly ? '🛬' : sail ? '⚓' : talk ? '💬' : wIcon(p.weapon);
   btn.style.background = sp ? `conic-gradient(#ffd54fcc ${pct}%, #ffffff30 0)` : '';
 }
 
@@ -1732,6 +1767,13 @@ const BUILDS = [
     done: 'Jetzt könnt ihr das reife Getreide hinter dem Stall mähen: ins Feld stellen und zaubern. Bringt das Getreide 🌾 in den Futtertrog im Stall!' },
   { id: 'basket', gear: true, needDragon: true, name: 'Drachenkorb', icon: '🧺', px: -13, pz: 69, cost: { wood: 6, grain: 2 },
     done: 'Die Drachen tragen jetzt einen Korb! Lande mit dem Drachen und lauf mit deinen Tieren zu ihm, dann hüpfen sie hinein (5 Hühner, 2 Kühe, 2 Wildschweine, 1 Reh). Flieg zu deiner Festung 🚩 oder zum Stall, dort hüpfen sie wieder heraus.' },
+  // Boote: werden in der Bootswerft am großen See gebaut, eins nach dem anderen
+  { id: 'raft', boat: true, name: 'Floß', icon: '🛶', px: 78, pz: 46, cost: { wood: 5 },
+    done: 'Das Floß liegt am Steg der Bootswerft! Stell dich daneben und drück die Zauber-Taste zum Einsteigen. Es fährt gemütlich, aber nur auf ruhigem Wasser.' },
+  { id: 'rowboat', boat: true, needBuilt: 'raft', name: 'Ruderboot', icon: '🚣', px: 78, pz: 52, cost: { wood: 8, stone: 3 },
+    done: 'Das Ruderboot ist fertig! Es ist schneller als das Floß und kommt durch die hohen Wellen 🌊 bis zur Möweninsel.' },
+  { id: 'ship', boat: true, needBuilt: 'rowboat', name: 'Segelschiff', icon: '⛵', px: 78, pz: 58, cost: { wood: 12, gold: 6, star: 3 },
+    done: 'Das Segelschiff ist fertig! Es ist das schnellste Boot, hat eine Tröte 📯 und ist so stark, dass es sogar durch den Strudel 🌀 zur Schatzinsel kommt!' },
   { id: 'bakery', name: 'Bäckerei', icon: '🍞', px: -19, pz: 69, x: BAKERY.x, z: BAKERY.z, cost: { wood: 4, stone: 4 },
     done: 'Hinter dem Getreidefeld steht jetzt eine Bäckerei! Die Mühle mahlt Getreide 🌾 aus dem Burglager zu Mehl, und der Ofen backt Brot 🍞. Brot macht richtig satt!' },
 ];
@@ -1898,6 +1940,12 @@ function makeBuildModel(id) {
 function placeBuild(id) {
   const s = sites.find((x) => x.b.id === id);
   built[id] = true;
+  if (s.b.boat) {
+    boatBuilt(id);
+    const d = boatDock(id);
+    for (let k = 0; k < 8; k++) floatText(scene, '✨', '#ffd54f', { x: d.x + (Math.random() - 0.5) * 3, z: d.z + (Math.random() - 0.5) * 3 }, 1 + Math.random() * 2);
+    return;
+  }
   if (s.b.gear) {
     setDragonBasket(true);
     for (let k = 0; k < 6; k++) floatText(scene, '✨', '#ffd54f', { x: s.b.px + (Math.random() - 0.5) * 3, z: s.b.pz + (Math.random() - 0.5) * 3 }, 1 + Math.random() * 2);
@@ -1916,6 +1964,11 @@ function placeBuild(id) {
 }
 
 function tryBuild(s, p) {
+  const before = s.b.needBuilt && BUILDS.find((x) => x.id === s.b.needBuilt);
+  if (before && !built[before.id]) {
+    if (s.hintCd <= 0) { s.hintCd = 5; fxPlayerMsg(p.index, `${s.b.icon} Für das ${s.b.name} baut zuerst das ${before.name} ${before.icon}. Dann wird es immer krasser!`, 3500); }
+    return;
+  }
   if (s.b.needDragon && !dragonReady()) {
     if (s.hintCd <= 0) { s.hintCd = 5; fxPlayerMsg(p.index, `🐉 Den ${s.b.name} gibt es erst, wenn ihr einen Drachen habt: alle Dorfrätsel lösen und den Festturm bauen.`, 3500); }
     return;
@@ -2033,6 +2086,18 @@ function updateBuildLogic(dt) {
       fxFloat('🍞 Frisch gebacken!', '#ffcc80', { x: BAKERY.x, z: BAKERY.z - 2 });
     }
   }
+  // Bootswerft und Boote: kurze Hinweise
+  for (const p of alivePlayers()) {
+    if (p.boat != null || (p.werftHintT || 0) > performance.now()) continue;
+    const pos = p.root.position;
+    if (pos.x > WERFT.x1 && pos.x < WERFT.x2 && pos.z > WERFT.z1 && pos.z < WERFT.z2 && !built.ship) {
+      p.werftHintT = performance.now() + 45000;
+      fxPlayerMsg(p.index, '⚓ Die Bootswerft! Stell dich auf eine Fläche: erst das Floß 🛶, dann das Ruderboot 🚣, dann das Segelschiff ⛵. Bezahlt wird aus dem Burglager. Was noch fehlt, steht im Rucksack 🎒.', 6000);
+    } else if (boatNear(pos, 1.6)) {
+      p.werftHintT = performance.now() + 25000;
+      fxPlayerMsg(p.index, `⚓ Drück ${talkKey()}, dann steigst du ins Boot!`, 3500);
+    }
+  }
   // Werkstatt: auf eine Fläche stellen
   for (const s of sites) {
     s.hintCd -= dt;
@@ -2095,10 +2160,11 @@ function poseBuilds(dt) {
   padPulse += dt;
   unloadPad.material.opacity = 0.75 + Math.sin(padPulse * 3) * 0.25;
   for (const s of sites) {
-    const locked = s.b.needDragon && !dragonReady();
+    const before = s.b.needBuilt && !built[s.b.needBuilt] ? BUILDS.find((x) => x.id === s.b.needBuilt) : null;
+    const locked = (s.b.needDragon && !dragonReady()) || !!before;
     const ready = !locked && affords(shopPools(), s.b.cost);
     const state = built[s.b.id] ? 'built' : ready ? 'ready' : 'normal';
-    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? (s.b.tool || s.b.gear ? '✔ habt ihr' : '✔ gebaut') : locked ? 'erst 🐉' : matText(s.b.cost), state });
+    drawPad(s.pad, { icon: s.b.icon, title: s.b.name, line: state === 'built' ? (s.b.tool || s.b.gear || s.b.boat ? '✔ habt ihr' : '✔ gebaut') : before ? `erst ${before.icon}` : locked ? 'erst 🐉' : matText(s.b.cost), state });
     s.pad.material.opacity = state === 'ready' ? 0.75 + Math.sin(padPulse * 5) * 0.25 : 1;
   }
   const bar = $('store');
@@ -2119,6 +2185,7 @@ function resetBuilds() {
   for (const c of [...circles]) if ((c.x === -6 && c.z === 74) || (c.x === HOME.x + TOWER_REL.x && c.z === HOME.z + TOWER_REL.z)) circles.splice(circles.indexOf(c), 1);
   setTowerClimb(false);
   setDragonBasket(false);
+  resetBoats(players);
   if (bakeryBlock.box) { boxes.splice(boxes.indexOf(bakeryBlock.box), 1); circles.splice(circles.indexOf(bakeryBlock.oven), 1); bakeryBlock.box = bakeryBlock.oven = null; }
   for (const b of bigBubbles) scene.remove(b.m);
   bigBubbles.length = 0;
@@ -2446,7 +2513,7 @@ function useTool(p) {
 // Festung ausgebaut) rückt der Nebel weiter weg, bis die ganze Welt offen ist. Auf jedem Reisestein
 // öffnet sich die Weltkarte: dort kann man in jedes offene Gebiet reisen.
 const worldState = { level: WORLD_LEVELS.length - 1, bigFound: {} };
-const adventures = () => freed + treasures + solvedCount() + Object.keys(built).filter((k) => built[k]).length + forts.filter((f) => f.level > 1).length;
+const adventures = () => freed + treasures + islandsLooted() + solvedCount() + Object.keys(built).filter((k) => built[k]).length + forts.filter((f) => f.level > 1).length;
 const sectorOpen = (s) => sectorLevel(s) <= worldState.level;
 
 // Nebelwand: vier hohe, weiche Wände am Rand des offenen Gebiets
@@ -2603,6 +2670,8 @@ function drawWorldMap() {
     ctx.fillText(st.s.name, mx, my + 21);
     ctx.globalAlpha = 1;
   }
+  ctx.fillStyle = '#3a8fd0';
+  ctx.beginPath(); ctx.arc(...toMap(SEE.x, SEE.z), SEE.r * k, 0, Math.PI * 2); ctx.fill();
   ctx.font = '16px sans-serif';
   forts.forEach((f) => { if (!f.packed && players[f.i]) { const [mx, my] = toMap(f.x, f.z); ctx.fillText('🚩', mx, my + 6); } });
   players.forEach((q, i) => {
@@ -2634,7 +2703,7 @@ function drawWorldMap() {
 
 function travelTo(p, i) {
   const st = stones[i];
-  if (!p || !st || !sectorOpen(st.s) || p.dead || p.out || p.riding != null) return;
+  if (!p || !st || !sectorOpen(st.s) || p.dead || p.out || p.riding != null || p.boat != null) return;
   if (!stoneUnder(p, 2.5)) return;   // nur von einem Reisestein aus
   for (let k = 0; k < 5; k++) fxFloat('✨', '#80deea', { x: p.root.position.x + (Math.random() - 0.5) * 2, z: p.root.position.z + (Math.random() - 0.5) * 2 });
   p.root.position.set(st.x, 0, st.z - 2.6);
@@ -2715,7 +2784,7 @@ function fortSpotProblem(f, x, z) {
 }
 
 function fortAction(p) {
-  if (p.dead || p.out || p.riding != null) return;
+  if (p.dead || p.out || p.riding != null || p.boat != null) return;
   const f = forts[p.index], pos = p.root.position;
   if (f.packed) {
     // Vor dem Spieler aufstellen, das Tor zeigt zum Spieler
@@ -3032,6 +3101,8 @@ function buildSnapshot() {
     bb: bigBubbles.map((b) => [b.id, r2(b.sx), r2(b.sz), r2(b.ex), r2(b.ez), r2(b.t)]),
     vg: villageSnapshot(),
     dg: dragonSnapshot(),
+    bo: boatSnapshot(),
+    il: islandKey(),
     ev: netEvents.splice(0),
   };
 }
@@ -3052,6 +3123,8 @@ function syncMap(map, rows, create, update, remove) {
 function applySnapshot(s) {
   applyVillageSnapshot(s.vg);
   applyDragonSnapshot(s.dg, players);
+  applyBoatSnapshot(s.bo, players);
+  applyIslandKey(s.il);
   s.p.forEach((row, i) => {
     const p = players[i];
     if (!p) return;
@@ -3302,7 +3375,16 @@ function fillBag(p) {
     ...inPack,
     [`🍎 Äpfel für Tiere: ${p.apples}`, p.apples > 0],
   ]);
-  rows($('bagTools'), BUILDS.filter((b) => b.tool || b.gear).map((b) => [`${b.icon} ${b.name}: ${built[b.id] ? 'hast du ✔' : 'noch nicht'}`, !!built[b.id]]));
+  // Was fehlt noch? So sieht man gleich, was man sammeln muss
+  const need = (b) => {
+    if (built[b.id]) return 'hast du ✔';
+    const before = b.needBuilt && !built[b.needBuilt] && BUILDS.find((x) => x.id === b.needBuilt);
+    if (before) return `erst ${before.icon} ${before.name}`;
+    if (b.needDragon && !dragonReady()) return 'erst einen Drachen 🐉';
+    const miss = lacking(shopPools(), b.cost);
+    return Object.keys(miss).length ? `fehlt noch ${matText(miss)}` : 'genug da! Ab in die Werkstatt';
+  };
+  rows($('bagTools'), BUILDS.filter((b) => b.tool || b.gear || b.boat).map((b) => [`${b.icon} ${b.name}: ${need(b).replace('Werkstatt', b.boat ? 'Bootswerft' : 'Werkstatt')}`, !!built[b.id]]));
   rows($('bagStore'), MATERIALS.map((m) => [`${MAT_ICON[m]} ${MAT_NAME[m]}: ${store[m]}`, store[m] > 0]));
   const f = forts[p.index];
   rows($('bagFort'), [
@@ -3330,6 +3412,7 @@ const HELP = () => [
   ['🏰 Eigene Festung', `Lauf auf eine freie Wiese und drück ${isTouch ? '🏰' : 'F'}, dann steht deine Festung da. Drinnen bist du sicher und bekommst keinen Hunger. In der Mitte kannst du sie ausbauen. Zum Umziehen hineingehen und nochmal drücken.`],
   ['📦 Festungslager', `In deiner Festung ist links vorne die Lager-Fläche 📦. Stell dich drauf, dann kommt dein Rucksack ins Festungslager. Hinein passen ${FORT_LEVELS.slice(1).map((l) => `${l.cap} (${l.name})`).join(', ')} Sachen: je größer die Festung, desto mehr. Zum Bauen und Ausbauen zählt, was im Festungslager und im Burglager liegt.`],
   ['🐉 Drache, Sternenfeuer und Korb', `Mit ${isTouch ? '🔄' : 'Q'} spuckt der Drache Sternenfeuer, das freche Schelme verzaubert. Das geht im Flug und am Boden: neben dem gelandeten Drachen stehen und ${isTouch ? '🔄' : 'Q'} drücken. In der Werkstatt gibt es den Drachenkorb 🧺. Lande, lauf mit deinen Tieren zum Drachen, dann hüpfen sie hinein (5 Hühner, 2 Kühe, 2 Wildschweine, 1 Reh). Bei deiner Festung oder beim Stall hüpfen sie wieder heraus.`],
+  ['⛵ Boote und Inseln', `Hinter den Teichwiesen liegt ein großer See mit drei Schatzinseln 🎁. Am Westufer ist die Bootswerft ⚓: Dort baut ihr erst ein Floß 🛶 (${matText({ wood: 5 })}), dann ein Ruderboot 🚣 und zum Schluss ein Segelschiff ⛵. Jedes Boot ist schneller und stärker. Das Floß schafft nur ruhiges Wasser, das Ruderboot kommt durch hohe Wellen 🌊, nur das Segelschiff kommt durch den Strudel 🌀. Neben dem Boot ${talkKey()} drücken: einsteigen. Am Ufer nochmal: aussteigen. Was noch fehlt, steht im Rucksack 🎒.`],
   ['⛰️ Berge und Schätze', 'Die Berge sind aus Felsblöcken. Mit der Spitzhacke ⛏️ haust du Höhlen hinein. In den Bergen sind Schatztruhen 💎 versteckt. Wenn es glitzert, bist du ganz nah!'],
   ['🗺️ Weltkarte und Reisesteine', `Mit ${isTouch ? '🗺️' : 'M'} siehst du die Weltkarte. Mit jedem Abenteuer (Tiere befreien, Schätze finden, bauen, Rätsel lösen) wird die Welt größer. Auf einem Reisestein (blauer Kreis) könnt ihr in ein anderes Gebiet reisen.`],
 ];
@@ -3515,6 +3598,7 @@ function makeSave() {
       caves: CAVES.map((c) => c.state),
       rock: MASSIFS.map(dugKey),
       treasures,
+      islands: islandKey(),
     });
   }
   s.villages = villageSave();
@@ -3557,6 +3641,7 @@ function applySave(s) {
       animals.push(a);
     });
     if (s.trough !== undefined) { farm.trough = int(s.trough, 0, TROUGH_MAX); showTrough(farm.trough); }
+    applyIslandKey(s.islands);
     applyFieldKey(s.field);
     applyHouseKey(s.houses);
     applyFortKey(s.forts);
@@ -3683,7 +3768,7 @@ function continueFrom(s) {
 }
 
 // Zum Testen: mit ?debug in der Adresse kommt man an das Spiel heran
-if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, worldState, setWorldLevel, stones, travelTo, adventures, get treasures() { return treasures; },
+if (location.search.includes('debug')) window.kic = { dragons: dragonDebug, boats: boatDebug, villages: { talkTo, pickDialog, save: villageSave, ...villageDebug }, players: () => players, items, TREES, CAVES, placeBuild, useTool, blockedSpot, solidAt, fallen, built, store, attack, makeSave, farm, animals, mowGrain, applySave, HOUSES, forts, fortAction, worldState, setWorldLevel, stones, travelTo, adventures, get treasures() { return treasures; },
   enemies, projectiles, shoot, lineBlocked, get wizard() { return wizard; }, PUZZLES, dragonList, fortFill, fortCap, tryBuild, sites };
 
 // ================= Spielschleife =================
@@ -3732,7 +3817,7 @@ function step(dt) {
       updateWizardLogic(dt);
       updateVillages(dt, players);
       updateDragons(dt, players);
-      if (kid) updateBasket();
+      if (kid) { updateBasket(); updateBoats(dt, players); }
       updateItems(dt);
       poseItems(dt);
       enemies.forEach((e) => poseEnemy(e, dt));
@@ -3758,6 +3843,7 @@ function step(dt) {
     if (kid) poseStones(dt);
     poseVillages(dt, players);
     poseDragons(dt, isSim());
+    poseBoats(dt, isSim());
     updateFallers(dt);
   }
   updateFrogs(dt);

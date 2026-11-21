@@ -96,6 +96,8 @@ export const sfx = {
   chop: () => beep(170, 0.09, 'square', 0.07, 80),
   clink: () => [1300, 900].forEach((f, i) => beep(f, 0.06, 'square', 0.04, 600, i * 0.05)),
   poof: () => [523, 784, 1047, 1568].forEach((f, i) => beep(f, 0.12, 'triangle', 0.05, 0, i * 0.06)),
+  horn: () => [[147, 0], [147, 0.5]].forEach(([f, d]) => { beep(f, 0.4, 'sawtooth', 0.05, 0, d); beep(f * 1.5, 0.4, 'triangle', 0.04, 0, d); }),
+  splash: () => beep(400, 0.25, 'sine', 0.05, 90),
   lifeLost: () => [392, 330, 262].forEach((f, i) => beep(f, 0.25, 'triangle', 0.06, 0, i * 0.2)),
 };
 

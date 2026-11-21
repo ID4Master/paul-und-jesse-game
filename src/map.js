@@ -9,6 +9,20 @@ export const VILLAGES = [
 
 export const LAKE = { x: 238, z: -150, r: 17 };
 
+// Großer See hinter den Teichwiesen: Hier fahren die Boote. Drei Inseln mit Schatztruhen.
+// rough: 0 ruhiges Wasser, 1 hohe Wellen (erst mit dem Ruderboot), 2 Strudel (nur das Segelschiff schafft das)
+// ring: bis zu diesem Abstand um die Insel reichen die Wellen oder der Strudel
+export const SEE = { x: 106, z: 52, r: 22 };
+export const ISLANDS = [
+  { id: 'seerose', name: 'Seerosen-Insel', x: 98, z: 64, r: 2.6, ring: 0, rough: 0, loot: ['gold', 'gold', 'star', 'heart'] },
+  { id: 'moewe', name: 'Möweninsel', x: 117.5, z: 42.4, r: 2.4, ring: 5, rough: 1, loot: ['gold', 'gold', 'gold', 'star', 'star', 'life'] },
+  { id: 'schatz', name: 'Schatzinsel', x: 106, z: 52, r: 3.2, ring: 6.5, rough: 2, loot: ['gold', 'gold', 'gold', 'gold', 'gold', 'star', 'star', 'star', 'life', 'life'] },
+];
+// Bootswerft am Westufer (Holzboden mit den Bau-Flächen) und Steg ins Wasser
+export const WERFT = { x1: 73, x2: 82.5, z1: 42, z2: 62 };
+export const nearSee = (x, z, extra = 0) =>
+  Math.hypot(x - SEE.x, z - SEE.z) < SEE.r + 2 + extra || (x > WERFT.x1 - extra && x < WERFT.x2 + extra && z > WERFT.z1 - extra && z < WERFT.z2 + extra);
+
 // Wege: [x1, z1, x2, z2], 4 breit
 export const PATH_W = 4;
 export const PATHS = [

@@ -3,7 +3,7 @@ import { std, mesh, circles, boxes, move, blocked, WORLD } from './util.js';
 import { addHouse, addWell, addHay, addFence, addFlag, HOME, ENEMY_CASTLE, POND, MOUNTAINS, HOUSES } from './world.js';
 import { makeHuman, animateHuman, makeAnimal, animateAnimal } from './characters.js';
 import { dirtTex } from './textures.js';
-import { VILLAGES, LAKE, PATHS, PATH_W } from './map.js';
+import { VILLAGES, LAKE, PATHS, PATH_W, SEE, ISLANDS } from './map.js';
 
 // ================= Drei neue Dörfer =================
 // Mühlbach (Westen): Wer hat den Erdbeerkuchen geklaut? Leute fragen und den Dieb finden.
@@ -799,7 +799,9 @@ function drawMapBase() {
   ctx.fillStyle = '#9e9a92';
   for (const m of MOUNTAINS) { ctx.beginPath(); ctx.arc(...toMap(m.x, m.z), m.r * k, 0, 7); ctx.fill(); }
   ctx.fillStyle = '#3a8fd0';
-  for (const w of [POND, LAKE]) { ctx.beginPath(); ctx.arc(...toMap(w.x, w.z), w.r * k + 1, 0, 7); ctx.fill(); }
+  for (const w of [POND, LAKE, SEE]) { ctx.beginPath(); ctx.arc(...toMap(w.x, w.z), w.r * k + 1, 0, 7); ctx.fill(); }
+  ctx.fillStyle = '#d9c49a';
+  for (const w of ISLANDS) { ctx.beginPath(); ctx.arc(...toMap(w.x, w.z), Math.max(1.5, w.r * k), 0, 7); ctx.fill(); }
   const dot = (x, z, color, r) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(...toMap(x, z), r, 0, 7); ctx.fill(); };
   dot(HOME.x, HOME.z, '#1e63d6', 5);
   dot(ENEMY_CASTLE.x, ENEMY_CASTLE.z, '#c62828', 6);

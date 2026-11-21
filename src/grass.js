@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { VILLAGES, LAKE, PATHS, PATH_W, FIELD, BAKERY } from './map.js';
+import { VILLAGES, LAKE, PATHS, PATH_W, FIELD, BAKERY, SEE, WERFT } from './map.js';
 import { WORLD } from './util.js';
 
 const f1 = (v) => v.toFixed(1);
@@ -10,6 +10,8 @@ const EXTRA_MASK = [
   `if (p.x > ${f1(FIELD.x1 - 0.5)} && p.x < ${f1(FIELD.x2 + 0.5)} && p.y > ${f1(FIELD.z1 - 0.5)} && p.y < ${f1(FIELD.z2 + 0.5)}) return 0.0;`,
   `if (abs(p.x - ${f1(BAKERY.x)}) < 4.0 && abs(p.y - ${f1(BAKERY.z)}) < 3.5) return 0.0;`,
   `if (length(p - vec2(${f1(LAKE.x)}, ${f1(LAKE.z)})) < ${f1(LAKE.r + 2)}) return 0.0;`,
+  `if (length(p - vec2(${f1(SEE.x)}, ${f1(SEE.z)})) < ${f1(SEE.r + 1.8)}) return 0.0;`,
+  `if (p.x > ${f1(WERFT.x1)} && p.x < ${f1(WERFT.x2)} && p.y > ${f1(WERFT.z1)} && p.y < ${f1(WERFT.z2)}) return 0.0;`,
 ].join('\n  ');
 
 // Schönes Gras, das trotzdem schnell ist (Ideen aus Three.js-Grastechniken):
