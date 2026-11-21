@@ -36,7 +36,9 @@ export const boxes = [];
 export const blockers = [];
 
 export function blocked(x, z, r) {
-  if (Math.abs(x) > bounds.r - 2 || Math.abs(z) > bounds.r - 2) return true;
+  // Ist die ganze Welt offen, hält das Meer alle auf (siehe boats.js). Inseln im Meer liegen weiter draußen.
+  if (bounds.r < WORLD && (Math.abs(x) > bounds.r - 2 || Math.abs(z) > bounds.r - 2)) return true;
+  if (Math.abs(x) > WORLD + 60 || Math.abs(z) > WORLD + 60) return true;
   for (const c of circles) {
     const dx = x - c.x, dz = z - c.z;
     if (dx * dx + dz * dz < (c.r + r) ** 2) return true;

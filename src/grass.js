@@ -1,5 +1,5 @@
 import * as THREE from '../lib/three.module.js';
-import { VILLAGES, LAKE, PATHS, PATH_W, FIELD, BAKERY, SEE, WERFT } from './map.js';
+import { VILLAGES, LAKE, PATHS, PATH_W, FIELD, BAKERY, SEE, WERFT, COAST, HARBOR } from './map.js';
 import { WORLD } from './util.js';
 
 const f1 = (v) => v.toFixed(1);
@@ -11,6 +11,13 @@ const EXTRA_MASK = [
   `if (abs(p.x - ${f1(BAKERY.x)}) < 4.0 && abs(p.y - ${f1(BAKERY.z)}) < 3.5) return 0.0;`,
   `if (length(p - vec2(${f1(LAKE.x)}, ${f1(LAKE.z)})) < ${f1(LAKE.r + 2)}) return 0.0;`,
   `if (length(p - vec2(${f1(SEE.x)}, ${f1(SEE.z)})) < ${f1(SEE.r + 1.8)}) return 0.0;`,
+  // Strand und Meer (gleiche Rechnung wie coastDist in map.js)
+  `{ vec2 q = abs(p) - vec2(${f1(COAST.c - COAST.r)}); float a = atan(p.y, p.x);
+    float w = 5.0 + 9.0 * sin(3.0 * a + 1.0) + 6.0 * sin(5.0 * a + 2.0) + 3.5 * sin(11.0 * a + 0.5) + 2.0 * sin(17.0 * a + 4.0);
+    float d = abs(a - 1.5708); if (d > 3.14159) d = 6.28318 - d;
+    w *= clamp((d - 0.12) / 0.3, 0.0, 1.0);
+    if (length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - ${f1(COAST.r)} - w > ${f1(-COAST.beach - 0.5)}) return 0.0; }`,
+  `if (p.x > ${f1(HARBOR.x1)} && p.x < ${f1(HARBOR.x2)} && p.y > ${f1(HARBOR.z1)}) return 0.0;`,
   `if (p.x > ${f1(WERFT.x1)} && p.x < ${f1(WERFT.x2)} && p.y > ${f1(WERFT.z1)} && p.y < ${f1(WERFT.z2)}) return 0.0;`,
 ].join('\n  ');
 

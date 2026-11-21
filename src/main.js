@@ -6,7 +6,7 @@ import { MASSIFS, buildMountain, cellAt, cellInside, underRock, crackCell, setCe
 import { buildWorld, updateWorld, HOME, GUARD_SPAWNS, ARCHER_SPAWNS, randomFreeSpot, STALL, CAGE_SPOTS, WIZARD_POS, TREES, setTreeVisible, MOUNTAINS, HOUSES, houseAt } from './world.js';
 import { buildFarm, makeTroughFill, showTrough, growField, showPlant, ripeNear, inField, fieldKey, applyFieldKey, resetField, makeBakeryModel, BREAD_SPOT,
   TROUGH, TROUGH_PAD, TROUGH_MAX } from './farm.js';
-import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel, SEE, ISLANDS, WERFT } from './map.js';
+import { BAKERY, pathDist, nearVillage, nearFarm, WORLD_LEVELS, LEVEL_NEED, SECTORS, sectorLevel, SEE, ISLANDS, WERFT, HARBOR, COAST, coastPoint } from './map.js';
 import { FORT_HALF, FORT_LEVELS, FORT_MAX, FORT_COLORS, FORT_STORE, rot, fortBoxes, inFort, makeFortModel, makeFortBundle } from './fort.js';
 import { WORLD, bounds } from './util.js';
 import { makeHuman, animateHuman, flash, setWeapon, setArmorLevel, makeAnimal, animateAnimal, makeWeaponModel, makeFrog, makeCage, addWizardLook } from './characters.js';
@@ -136,15 +136,17 @@ initBoats(scene, {
     const k = p.keymap === KEYMAPS.p2 ? ['Pfeiltasten', 'Enter', 'Shift rechts'] : p.keymap === KEYMAPS.p1 ? ['W A S D', 'Leertaste', 'Q'] : ['W A S D oder Pfeile', 'Leertaste/Enter', 'Q'];
     return `${k[0]}: fahren und lenken, ${k[1]} am Ufer: aussteigen${horn ? `, ${k[2]}: Tröte` : ''}.`;
   },
-  loot: (isl, p, at) => {
+  later: (t, fn) => later(t, fn),
+  loot: (isl, p, at, left, area) => {
     isl.loot.forEach((type, k) => {
       const a = (k / isl.loot.length) * Math.PI * 2;
       dropItem(type, { x: at.x + Math.sin(a) * 1.2, z: at.z + Math.cos(a) * 1.2 });
     });
     fxSfx('levelUp');
     fxFloat('🎁 Inselschatz! 🎁', '#ffd54f', at);
-    const left = 3 - islandsLooted();
-    fxGlobalMsg(left ? `🏝️ ${isl.name}: Schatz gefunden! Auf dem See warten noch ${left} ${left === 1 ? 'Inselschatz' : 'Inselschätze'}.` : '🏴‍☠️ Alle Inselschätze gefunden! Ihr seid echte Seefahrer! 🏴‍☠️', 6000);
+    const where = area === 'meer' ? 'im Meer' : 'auf dem See';
+    fxGlobalMsg(left ? `🏝️ ${isl.name}: Schatz gefunden! ${where[0].toUpperCase() + where.slice(1)} warten noch ${left} ${left === 1 ? 'Inselschatz' : 'Inselschätze'}.`
+      : area === 'meer' ? '🏴‍☠️ Alle Schätze im Meer gefunden! Ihr seid die größten Seefahrer! 🏴‍☠️' : '🏝️ Alle Schätze auf dem See gefunden! Im Hafen im Süden geht es aufs Meer hinaus! ⚓', 6000);
   },
 });
 
@@ -1774,6 +1776,11 @@ const BUILDS = [
     done: 'Das Ruderboot ist fertig! Es ist schneller als das Floß und kommt durch die hohen Wellen 🌊 bis zur Möweninsel.' },
   { id: 'ship', boat: true, needBuilt: 'rowboat', name: 'Segelschiff', icon: '⛵', px: 78, pz: 58, cost: { wood: 12, gold: 6, star: 3 },
     done: 'Das Segelschiff ist fertig! Es ist das schnellste Boot, hat eine Tröte 📯 und ist so stark, dass es sogar durch den Strudel 🌀 zur Schatzinsel kommt!' },
+  // Im Hafen am Meer (das Ruderboot dort darf man einfach nehmen)
+  { id: 'segler', boat: true, name: 'Segelschiff', icon: '⛵', px: -14, pz: 274, cost: { wood: 12, gold: 6, star: 3 },
+    done: 'Im Hafen liegt jetzt ein Segelschiff! Es fährt weiter aufs Meer hinaus als das Ruderboot, bis zum Möwenfelsen.' },
+  { id: 'dreimaster', boat: true, needBuilt: 'segler', name: 'Dreimaster', icon: '🏴‍☠️', px: -7, pz: 274, cost: { wood: 20, gold: 15, star: 6 },
+    done: 'Der Dreimaster ist fertig! Das größte und schnellste Schiff von allen. Er trotzt sogar dem Sturm bis zur Pirateninsel, und mit der Wechsel-Taste schießt die Sternenkanone Feuerwerk! 🎆' },
   { id: 'bakery', name: 'Bäckerei', icon: '🍞', px: -19, pz: 69, x: BAKERY.x, z: BAKERY.z, cost: { wood: 4, stone: 4 },
     done: 'Hinter dem Getreidefeld steht jetzt eine Bäckerei! Die Mühle mahlt Getreide 🌾 aus dem Burglager zu Mehl, und der Ofen backt Brot 🍞. Brot macht richtig satt!' },
 ];
@@ -2093,6 +2100,9 @@ function updateBuildLogic(dt) {
     if (pos.x > WERFT.x1 && pos.x < WERFT.x2 && pos.z > WERFT.z1 && pos.z < WERFT.z2 && !built.ship) {
       p.werftHintT = performance.now() + 45000;
       fxPlayerMsg(p.index, '⚓ Die Bootswerft! Stell dich auf eine Fläche: erst das Floß 🛶, dann das Ruderboot 🚣, dann das Segelschiff ⛵. Bezahlt wird aus dem Burglager. Was noch fehlt, steht im Rucksack 🎒.', 6000);
+    } else if (pos.x > HARBOR.x1 && pos.x < HARBOR.x2 && pos.z > HARBOR.z1 && !built.dreimaster) {
+      p.werftHintT = performance.now() + 45000;
+      fxPlayerMsg(p.index, '⚓ Der Hafen! Das grüne Ruderboot am Steg dürft ihr einfach nehmen. Segelschiff ⛵ und Dreimaster 🏴‍☠️ baut ihr hier auf den Flächen. Je weiter ihr aufs Meer fahrt, desto höher werden die Wellen!', 7000);
     } else if (boatNear(pos, 1.6)) {
       p.werftHintT = performance.now() + 25000;
       fxPlayerMsg(p.index, `⚓ Drück ${talkKey()}, dann steigst du ins Boot!`, 3500);
@@ -2658,6 +2668,14 @@ function drawWorldMap() {
   ctx.fillStyle = '#4f8a43';
   const [ox, oz] = toMap(-r, -r);
   ctx.fillRect(ox, oz, 2 * r * k, 2 * r * k);
+  // Die Insel: rundherum Strand und Meer
+  ctx.fillStyle = '#2a7fc0';
+  ctx.fillRect(0, 0, S, S);
+  for (const [off, color] of [[0, '#e2cf9f'], [-COAST.beach, '#4f8a43']]) {
+    ctx.fillStyle = color; ctx.beginPath();
+    for (let n = 0; n < 180; n++) { const q = coastPoint((n / 180) * Math.PI * 2, off); ctx.lineTo(...toMap(q.x, q.z)); }
+    ctx.fill();
+  }
   ctx.textAlign = 'center';
   for (const st of stones) {
     const open = sectorOpen(st.s);
@@ -2673,6 +2691,7 @@ function drawWorldMap() {
   ctx.fillStyle = '#3a8fd0';
   ctx.beginPath(); ctx.arc(...toMap(SEE.x, SEE.z), SEE.r * k, 0, Math.PI * 2); ctx.fill();
   ctx.font = '16px sans-serif';
+  ctx.fillText('⚓', ...toMap(HARBOR.x1 + 22, HARBOR.z1 + 10).map((v, n) => v + (n ? 6 : 0)));
   forts.forEach((f) => { if (!f.packed && players[f.i]) { const [mx, my] = toMap(f.x, f.z); ctx.fillText('🚩', mx, my + 6); } });
   players.forEach((q, i) => {
     const [mx, my] = toMap(q.root.position.x, q.root.position.z);
@@ -3413,8 +3432,9 @@ const HELP = () => [
   ['📦 Festungslager', `In deiner Festung ist links vorne die Lager-Fläche 📦. Stell dich drauf, dann kommt dein Rucksack ins Festungslager. Hinein passen ${FORT_LEVELS.slice(1).map((l) => `${l.cap} (${l.name})`).join(', ')} Sachen: je größer die Festung, desto mehr. Zum Bauen und Ausbauen zählt, was im Festungslager und im Burglager liegt.`],
   ['🐉 Drache, Sternenfeuer und Korb', `Mit ${isTouch ? '🔄' : 'Q'} spuckt der Drache Sternenfeuer, das freche Schelme verzaubert. Das geht im Flug und am Boden: neben dem gelandeten Drachen stehen und ${isTouch ? '🔄' : 'Q'} drücken. In der Werkstatt gibt es den Drachenkorb 🧺. Lande, lauf mit deinen Tieren zum Drachen, dann hüpfen sie hinein (5 Hühner, 2 Kühe, 2 Wildschweine, 1 Reh). Bei deiner Festung oder beim Stall hüpfen sie wieder heraus.`],
   ['⛵ Boote und Inseln', `Hinter den Teichwiesen liegt ein großer See mit drei Schatzinseln 🎁. Am Westufer ist die Bootswerft ⚓: Dort baut ihr erst ein Floß 🛶 (${matText({ wood: 5 })}), dann ein Ruderboot 🚣 und zum Schluss ein Segelschiff ⛵. Jedes Boot ist schneller und stärker. Das Floß schafft nur ruhiges Wasser, das Ruderboot kommt durch hohe Wellen 🌊, nur das Segelschiff kommt durch den Strudel 🌀. Neben dem Boot ${talkKey()} drücken: einsteigen. Am Ufer nochmal: aussteigen. Was noch fehlt, steht im Rucksack 🎒.`],
+  ['⚓ Hafen und Meer', 'Die ganze Welt ist eine Insel mit Strand rundherum. Ganz im Süden, unter Hügelhausen, ist der Hafen. Das grüne Ruderboot dort dürft ihr einfach nehmen. Segelschiff ⛵ und Dreimaster 🏴‍☠️ baut ihr im Hafen. Je weiter ihr hinausfahrt, desto höher die Wellen: Mit dem Ruderboot kommt ihr zur Muschelinsel, mit dem Segelschiff zum Möwenfelsen und nur mit dem Dreimaster durch den Sturm zur Pirateninsel.'],
   ['⛰️ Berge und Schätze', 'Die Berge sind aus Felsblöcken. Mit der Spitzhacke ⛏️ haust du Höhlen hinein. In den Bergen sind Schatztruhen 💎 versteckt. Wenn es glitzert, bist du ganz nah!'],
-  ['🗺️ Weltkarte und Reisesteine', `Mit ${isTouch ? '🗺️' : 'M'} siehst du die Weltkarte. Mit jedem Abenteuer (Tiere befreien, Schätze finden, bauen, Rätsel lösen) wird die Welt größer. Auf einem Reisestein (blauer Kreis) könnt ihr in ein anderes Gebiet reisen.`],
+  ['🗺️ Weltkarte und Reisesteine', `Mit ${isTouch ? '🗺️' : 'M'} siehst du die Weltkarte. Die ganze Insel ist offen, rundherum ist Meer. Auf einem Reisestein (blauer Kreis) könnt ihr in ein anderes Gebiet reisen.`],
 ];
 function toggleTips() {
   if (!started) return;
